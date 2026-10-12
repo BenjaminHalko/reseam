@@ -53,6 +53,8 @@ See [Hermes JavaScript](15_hermes.md) for extension sources and examples. Target
 | `HermesFunctionQuery.strings(vararg values)` | All strings must be referenced by instructions, including property names. |
 | `HermesFunctionQuery.paramCount(count)` | Declared JavaScript parameters, excluding `this`; nonnegative. |
 | `FunctionTarget.wrap(export: JsExport)` | Calls `export(original, ...arguments)` with the same receiver and returns its result. `original` is receiver-bound and retains the unchanged body and captured environment. |
+| `FunctionTarget.module` | The Metro module whose factory creates the function. Functions created outside a module, or in several, fail when the wrap is made. |
+| `FunctionTarget.wrap(export: JsExport, vararg modules: MetroModule)` | Calls `export(...modules, original, ...arguments)`, each module being its exports, read through Metro's `__r` on every call. |
 | `FunctionTarget.alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / String)` | Replaces the body with a constant result. Earlier wraps no longer run; later wraps receive it as `original`. |
 | `ExtJsModule(name)` | Declares an extension artifact, such as `example-features`. |
 | `ExtJsModule.export(name = null)` | Property delegate for a callable property of its exports object, named after the property unless `name` is given. Validated on use. |
@@ -226,7 +228,7 @@ Resource file and value helpers:
 | `Vector.svg(source)` | A vector image from an SVG: paths and basic shapes with fills and strokes; `currentColor` takes the screen's icon color. |
 | `CodeScope.whenEnabled(toggle) { }` | Branch on a toggle at runtime; returns `Otherwise`. |
 | `gate(toggle) { GateScope }` | Hooks inside take effect only while the toggle is on. |
-| `GateScope` | `MethodTarget` and `PointTarget` `before { }`, `after { }`; `MethodTarget.alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / Long / String)`; `PointTarget.skip()`; `FunctionTarget.wrap(export)`, `alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / String)`, `setArgument(index, path, value)`. |
+| `GateScope` | `MethodTarget` and `PointTarget` `before { }`, `after { }`; `MethodTarget.alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / Long / String)`; `PointTarget.skip()`; `FunctionTarget.wrap(export)`, `wrap(export, vararg modules)`, `alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / String)`, `setArgument(index, path, value)`. |
 
 ## `app.reseam.patch.dex`
 

@@ -47,6 +47,7 @@ internal object AppRuntimeJs : ExtJsModule("reseam-app-runtime-js") {
     val returnNullWhen by export()
     val returnWhen by export()
     val wrapWhen by export()
+    val wrapWithModulesWhen by export()
     val setArgumentWhen by export()
 }
 

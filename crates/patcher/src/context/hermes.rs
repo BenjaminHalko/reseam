@@ -32,14 +32,17 @@ enum ModuleSource {
 }
 
 impl HermesSession {
-    fn edit<T>(&mut self, action: impl FnOnce(&mut Editor<'_>) -> Result<T>) -> Result<T> {
+    fn edit<T>(
+        &mut self,
+        action: impl FnOnce(&mut Editor<'_>, &FunctionIndex) -> Result<T>,
+    ) -> Result<T> {
         let file = self.image.file();
         let mut editor = if let Some(edits) = self.edits.take() {
             Editor::resume(file, edits)?
         } else {
             Editor::new(file)
         };
-        let outcome = action(&mut editor);
+        let outcome = action(&mut editor, &self.index);
         self.edits = Some(editor.into_edits());
         outcome
     }
@@ -117,7 +120,7 @@ impl PatchContext<'_> {
         }
         let module = bytes(session.image.file().version())?;
         let module_file = HermesFile::parse(&module)?;
-        let id = session.edit(|editor| Ok(editor.link(&module_file)?))?;
+        let id = session.edit(|editor, _| Ok(editor.link(&module_file)?))?;
         session.modules.insert(source, id);
         Ok(id)
     }
@@ -130,7 +133,7 @@ impl PatchContext<'_> {
         bound: &[Argument],
     ) -> Result<()> {
         self.hermes_session()?
-            .edit(|editor| Ok(editor.wrap(function, module, export, bound)?))
+            .edit(|editor, index| Ok(editor.wrap(index, function, module, export, bound)?))
     }
 
     pub(crate) fn hermes_always_return(
@@ -139,7 +142,7 @@ impl PatchContext<'_> {
         value: &Constant,
     ) -> Result<()> {
         self.hermes_session()?
-            .edit(|editor| Ok(editor.always_return(function, value)?))
+            .edit(|editor, _| Ok(editor.always_return(function, value)?))
     }
 
     /// Writes the bundle back when a patch changed it.
@@ -151,7 +154,7 @@ impl PatchContext<'_> {
             return Ok(());
         }
         let mut file = reseam_storage::temporary_file()?;
-        session.edit(|editor| {
+        session.edit(|editor, _| {
             let mut output = BufWriter::new(&mut file);
             editor.write(&mut output)?;
             output.flush()?;

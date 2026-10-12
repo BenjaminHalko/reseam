@@ -95,6 +95,24 @@ class FunctionTarget internal constructor(debugName: String?, private val query:
         hermesWrap(resolved, export.module.source, export.name, bound)
 
     internal fun returnConstant(value: HermesConstant) = hermesAlwaysReturn(resolved, value)
+
+    /**
+     * The Metro module that defines this function, for passing to [wrap]. React Native bundles
+     * register each source module with Metro; its exports hold the module's functions, and a store
+     * module's `default` export is the store. The module is the one whose factory creates this
+     * function, found when the wrap is made. A function created outside a module, or in several,
+     * fails the patch.
+     */
+    val module: MetroModule
+        get() = MetroModule(this)
+}
+
+/**
+ * A Metro module of the app's bundle, named by a function it defines. See [FunctionTarget.module].
+ */
+class MetroModule internal constructor(private val function: FunctionTarget) {
+    internal val argument: HermesArgument
+        get() = HermesArgument.Module(function.resolved)
 }
 
 /**
@@ -113,6 +131,18 @@ class FunctionTarget internal constructor(debugName: String?, private val query:
  * be called with `new` afterwards. Debug data for edited functions may be dropped.
  */
 fun FunctionTarget.wrap(export: JsExport) = wrapBound(export, emptyList())
+
+/**
+ * Like [wrap], passing the exports of each of [modules] to [export] ahead of `original`:
+ * `export(...modules, original, ...arguments)`. Each module is read through Metro's `__r` whenever
+ * the function runs, which initializes it first if the app has not loaded it yet.
+ *
+ * ```kotlin
+ * handlePressSend.wrap(Preview.handlePressSend, receiveMessage.module, getDraft.module)
+ * ```
+ */
+fun FunctionTarget.wrap(export: JsExport, vararg modules: MetroModule) =
+    wrapBound(export, modules.map { it.argument })
 
 /**
  * Replaces the function's body with `return undefined`. Earlier wraps of the function no longer

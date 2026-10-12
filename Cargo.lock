@@ -1296,6 +1296,7 @@ dependencies = [
 name = "reseam-hermes"
 version = "0.21.0"
 dependencies = [
+ "rayon",
  "reseam-storage",
  "ring",
  "rustc-hash",

@@ -99,6 +99,8 @@ pub enum HermesArgument {
     Int(i32),
     Text(String),
     Export(HermesExportRef),
+    /// The exports of the Metro module that creates the function with this handle.
+    Module(u32),
 }
 
 /// A JavaScript module compiled to Hermes bytecode.
@@ -126,7 +128,7 @@ pub fn hermes_wrap(
     export: String,
     bound: Vec<HermesArgument>,
 ) -> Result<(), String> {
-    let function = function(handle)?;
+    let target = function(handle)?;
     with_ctx_result(|ctx| {
         let mut link = |module: &HermesModule| -> Result<ModuleId, String> {
             let linked = match module {
@@ -163,10 +165,11 @@ pub fn hermes_wrap(
                         module: link(&export.module)?,
                         name: export.name,
                     },
+                    HermesArgument::Module(handle) => Argument::Module(function(handle)?),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        ctx.hermes_wrap(function, module, &export, &bound)
+        ctx.hermes_wrap(target, module, &export, &bound)
             .map_err(|e| e.to_string())
     })
 }

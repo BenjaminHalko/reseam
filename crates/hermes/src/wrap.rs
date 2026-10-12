@@ -4,13 +4,18 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::assemble::{assemble, encode};
+use crate::dataflow::{Registers, register_states};
 use crate::edit::{EditedFunction, Editor, FunctionBody, Hook};
 use crate::error::{HermesError, Result, invalid};
 use crate::link::generated_function;
+use crate::metro::MetroModuleId;
 use crate::model::{FunctionKind, Prohibit, StringId, StringKind};
-use crate::opcode::{BUILTIN_APPLY, BUILTIN_APPLYARGUMENTS, IdKind, Instruction, Op, OperandKind};
+use crate::opcode::{BUILTIN_APPLY, BUILTIN_APPLYARGUMENTS, Instruction, Op};
 use crate::parse::switch_table;
-use crate::{Function, FunctionId, ModuleId};
+use crate::{Function, FunctionId, FunctionIndex, ModuleId};
+
+/// Metro's module require global.
+const REQUIRE: &str = "__r";
 
 /// A value a wrap passes to its export ahead of `original`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +28,9 @@ pub enum Argument {
         module: ModuleId,
         name: String,
     },
+    /// The exports of the Metro module whose factory creates this app function, read through
+    /// Metro's `__r` on each call.
+    Module(FunctionId),
 }
 
 #[derive(Clone)]
@@ -30,7 +38,14 @@ pub(crate) enum Bound {
     Bool(bool),
     Int(i32),
     Text(StringId),
-    Export { module: ModuleId, name: StringId },
+    Export {
+        module: ModuleId,
+        name: StringId,
+    },
+    Module {
+        id: MetroModuleId,
+        require: StringId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,8 +53,6 @@ enum Value {
     Undefined,
     Environment(u16),
 }
-
-type State = BTreeMap<u32, Value>;
 
 #[derive(Clone)]
 struct ClosureSite {
@@ -63,16 +76,19 @@ impl Editor<'_> {
     /// Each call adds one layer; shared ancestor bodies are assembled at write time.
     pub fn wrap(
         &mut self,
+        index: &FunctionIndex,
         function: FunctionId,
         module: ModuleId,
         export: &str,
         bound: &[Argument],
     ) -> Result<()> {
-        self.transaction(|editor| editor.wrap_function(function, module, export, bound))
+        index.check(&self.file)?;
+        self.transaction(|editor| editor.wrap_function(index, function, module, export, bound))
     }
 
     fn wrap_function(
         &mut self,
+        index: &FunctionIndex,
         function: FunctionId,
         module: ModuleId,
         export: &str,
@@ -96,11 +112,15 @@ impl Editor<'_> {
                         module: *module,
                         name: self.declared_export(*module, name)?,
                     },
+                    Argument::Module(function) => Bound::Module {
+                        id: self.metro_module(index, *function)?,
+                        require: self.intern(REQUIRE, StringKind::Identifier)?,
+                    },
                 })
             })
             .collect::<Result<Vec<_>>>()?;
         let target = self.editable(function)?;
-        let plan = self.hook_plan(function)?;
+        let plan = self.hook_plan(index, function)?;
         if let Some(id) = plan
             .roots
             .keys()
@@ -160,26 +180,17 @@ impl Editor<'_> {
         self.intern(export, StringKind::Identifier)
     }
 
-    fn hook_plan(&mut self, target: FunctionId) -> Result<HookPlan> {
-        if self.edits.hook_graph.is_none() {
-            self.edits.hook_graph = Some(HookGraph::build(&self.file)?);
-        }
-        let graph = self
-            .edits
-            .hook_graph
-            .as_mut()
-            .expect("hook graph initialized");
+    fn hook_plan(&mut self, index: &FunctionIndex, target: FunctionId) -> Result<HookPlan> {
+        let graph = self.edits.hook_graph.get_or_insert_with(HookGraph::default);
         if let Some(plan) = graph.plans.get(&target) {
             return Ok(plan.clone());
         }
         let mut needed = BTreeSet::from([target]);
         let mut pending = VecDeque::from([target]);
         while let Some(id) = pending.pop_front() {
-            if let Some(creators) = graph.parents.get(&id) {
-                for &creator in creators {
-                    if needed.insert(creator) {
-                        pending.push_back(creator);
-                    }
+            for &creator in index.creators(id) {
+                if needed.insert(creator) {
+                    pending.push_back(creator);
                 }
             }
         }
@@ -287,35 +298,14 @@ impl<'a> Editor<'a> {
     }
 }
 
+/// Closure environment analyses and hook plans, kept across wraps.
+#[derive(Default)]
 pub(crate) struct HookGraph {
-    parents: BTreeMap<FunctionId, BTreeSet<FunctionId>>,
     analyses: BTreeMap<FunctionId, ClosureAnalysis>,
     plans: BTreeMap<FunctionId, HookPlan>,
 }
 
 impl HookGraph {
-    fn build(file: &crate::HermesFile<'_>) -> Result<Self> {
-        let mut parents = BTreeMap::<FunctionId, BTreeSet<FunctionId>>::new();
-        for id in (0..file.function_count()).map(FunctionId) {
-            let function = file.function(id)?;
-            for inst in function.instructions()? {
-                for (operand, value) in inst.operands() {
-                    if operand.id == IdKind::Function {
-                        parents
-                            .entry(FunctionId(value as u32))
-                            .or_default()
-                            .insert(id);
-                    }
-                }
-            }
-        }
-        Ok(Self {
-            parents,
-            analyses: BTreeMap::new(),
-            plans: BTreeMap::new(),
-        })
-    }
-
     fn analysis(
         &mut self,
         file: &crate::HermesFile<'_>,
@@ -366,93 +356,14 @@ struct HookPlan {
     roots: BTreeMap<FunctionId, RootAttachment>,
 }
 
-/// Merges `state` into the entry state of `next`, queueing it when that changes.
-fn flow(
-    states: &mut BTreeMap<usize, State>,
-    work: &mut VecDeque<usize>,
-    next: usize,
-    state: &State,
-) {
-    if let Some(existing) = states.get_mut(&next) {
-        let before = existing.len();
-        existing.retain(|reg, value| state.get(reg) == Some(value));
-        if existing.len() != before {
-            work.push_back(next);
-        }
-    } else {
-        states.insert(next, state.clone());
-        work.push_back(next);
-    }
-}
-
-fn successors(
-    function: &Function<'_>,
-    code: &[Instruction],
-    index: usize,
-    indices: &BTreeMap<u32, usize>,
-) -> Result<Vec<usize>> {
-    let inst = &code[index];
-    let origin = i64::from(inst.offset.expect("analysed instructions are decoded"));
-    let mut result = Vec::new();
-    let mut add = |relative: i64| -> Result<()> {
-        let target = u32::try_from(origin + relative)
-            .map_err(|_| invalid(origin as usize, "invalid environment-analysis branch"))?;
-        result.push(
-            *indices
-                .get(&target)
-                .ok_or_else(|| invalid(target as usize, "branch outside instructions"))?,
-        );
-        Ok(())
-    };
-    for (operand, value) in inst.operands() {
-        match operand.kind {
-            OperandKind::Addr8 => add(i64::from(value as i8))?,
-            OperandKind::Addr32 => add(i64::from(value as i32))?,
-            _ => {}
-        }
-    }
-    if let Some(table) = switch_table(function, inst)? {
-        for (_, target) in table.entries() {
-            add(i64::from(target))?;
-        }
-    }
-    if !matches!(
-        inst.op,
-        Op::Ret
-            | Op::Throw
-            | Op::Unreachable
-            | Op::Jmp
-            | Op::JmpLong
-            | Op::UIntSwitchImm
-            | Op::StringSwitchImm
-    ) && index + 1 < code.len()
-    {
-        result.push(index + 1);
-    }
-    Ok(result)
-}
-
-/// Tracks which registers hold `undefined` or a known environment depth, merging
-/// control-flow paths conservatively, and reports what each closure captures.
+/// Tracks which registers hold `undefined` or a known environment depth and reports what each
+/// closure captures.
 fn analyse(
     function: &Function<'_>,
     code: &[Instruction],
     enclosing: u16,
 ) -> Result<Vec<ClosureSite>> {
-    if code.is_empty() {
-        return Ok(Vec::new());
-    }
-    let indices: BTreeMap<_, _> = code
-        .iter()
-        .enumerate()
-        .map(|(i, inst)| (inst.offset.expect("analysed instructions are decoded"), i))
-        .collect();
-    let handlers = function.exception_handlers()?;
-    let mut states = BTreeMap::from([(0_usize, State::new())]);
-    let mut work = VecDeque::from([0_usize]);
-    while let Some(index) = work.pop_front() {
-        let before = states[&index].clone();
-        let inst = &code[index];
+    let states = register_states(function, code, |inst, before: &Registers<Value>| {
         let offset = inst.offset.expect("analysed instructions are decoded");
         let v = &inst.values;
         let shifted = |value: Value, delta: i32| -> Result<Value> {
@@ -467,7 +378,7 @@ fn analyse(
                 Value::Undefined => Err(invalid(offset as usize, "undefined environment parent")),
             }
         };
-        let value = match inst.op {
+        Ok(match inst.op {
             Op::LoadConstUndefined => Some(Value::Undefined),
             Op::Mov | Op::MovLong => before.get(&(v[1] as u32)).copied(),
             Op::GetParentEnvironment => {
@@ -486,26 +397,8 @@ fn analyse(
                 .map(|p| shifted(p, -(v[2] as i32)))
                 .transpose()?,
             _ => None,
-        };
-        // A throwing instruction may have written any of its registers.
-        let mut thrown = before;
-        for register in inst.written_registers() {
-            thrown.remove(&register);
-        }
-        let mut after = thrown.clone();
-        if let Some(value) = value {
-            after.insert(v[0] as u32, value);
-        }
-        for next in successors(function, code, index, &indices)? {
-            flow(&mut states, &mut work, next, &after);
-        }
-        for handler in handlers.iter().filter(|h| h.covers(offset)) {
-            let next = *indices
-                .get(&handler.target)
-                .ok_or_else(|| invalid(offset as usize, "invalid exception target"))?;
-            flow(&mut states, &mut work, next, &thrown);
-        }
-    }
+        })
+    })?;
     let mut sites = Vec::new();
     for (index, inst) in code.iter().enumerate() {
         if !matches!(inst.op, Op::CreateClosure | Op::CreateClosureLongIndex) {
@@ -588,7 +481,7 @@ fn bound_original(name: StringId) -> EditedFunction {
     generated_function(name, 1, 20, encode(&code))
 }
 
-/// Appends `bound` to the argument array in r7, using r12 and r3 as scratch.
+/// Appends `bound` to the argument array in r7, using r3 and r12 to r15 as scratch.
 /// Returns the read cache slots the wrapper uses; slot 0 belongs to the hook export.
 fn load_bound(code: &mut Vec<Instruction>, bound: &[Bound], depth: u8) -> u8 {
     let mut read_cache = 1_u8;
@@ -617,6 +510,19 @@ fn load_bound(code: &mut Vec<Instruction>, bound: &[Bound], depth: u8) -> u8 {
                         Op::GetByIdLong,
                         &[12, 3, u64::from(read_cache), u64::from(name.0)],
                     ),
+                ]);
+                read_cache += 1;
+            }
+            Bound::Module { id, require } => {
+                code.extend([
+                    Instruction::new(Op::GetGlobalObject, &[3]),
+                    Instruction::new(
+                        Op::GetByIdLong,
+                        &[13, 3, u64::from(read_cache), u64::from(require.0)],
+                    ),
+                    Instruction::new(Op::LoadConstUndefined, &[14]),
+                    Instruction::new(Op::LoadConstInt, &[15, u64::from(id.0)]),
+                    Instruction::new(Op::Call2, &[12, 13, 14, 15]),
                 ]);
                 read_cache += 1;
             }

@@ -29,6 +29,12 @@ exports.wrapWhen = function (bundle, key, defaultValue, wrapper, original, ...ar
     return isEnabled(bundle, key, defaultValue) ? wrapper.call(this, original, ...args) : original(...args);
 };
 
+exports.wrapWithModulesWhen = function (bundle, key, defaultValue, wrapper, moduleCount, ...rest) {
+    const modules = rest.slice(0, moduleCount);
+    const [original, ...args] = rest.slice(moduleCount);
+    return isEnabled(bundle, key, defaultValue) ? wrapper.call(this, ...modules, original, ...args) : original(...args);
+};
+
 function withProperty(object, names, value) {
     const [name, ...rest] = names;
     return { ...object, [name]: rest.length === 0 ? value : withProperty(object[name], rest, value) };

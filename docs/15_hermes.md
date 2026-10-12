@@ -65,6 +65,32 @@ Every constraint must match. `name` is exact and case-sensitive; `strings` match
 
 Repeated wraps compose in the order patches apply them. The last wrap runs first and receives the previous wrap as `original`; the innermost `original` calls the unchanged app body. Exports from different modules can wrap the same function. Lookups continue to match the original app functions.
 
+## Use the app's modules
+
+An export often needs app functions besides the one it wraps: a store to read, or an action to dispatch. React Native bundles keep their source modules in Metro, the bundle's module system. Name a function a module defines, and pass that module to `wrap`:
+
+```kotlin
+handlePressSend.wrap(Preview.handlePressSend, getDraft.module, receiveMessage.module)
+
+private val getDraft = function {
+    name("getDraft")
+    strings("_drafts")
+    paramCount(2)
+}
+```
+
+The export receives each module's exports ahead of `original`:
+
+```javascript
+exports.handlePressSend = function (drafts, messages, original, ...args) {
+    const text = drafts.default.getDraft(channelId, 0);
+    // ...
+    return original(...args);
+};
+```
+
+A module is the one whose factory creates the function, found when the wrap is made; a function created outside a module, or in several, fails the patch. The exports are read through Metro's `__r` each time the wrapped function runs, which loads the module first if the app has not yet. A module's `default` export holds what its source exports by default, such as a store.
+
 ## Before, after, replace
 
 These are JavaScript around the same primitive:

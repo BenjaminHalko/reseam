@@ -94,6 +94,7 @@ pub struct Edits {
     pub(crate) module_exports: Vec<Vec<StringId>>,
     pub(crate) string_switches: u32,
     pub(crate) hook_graph: Option<crate::wrap::HookGraph>,
+    pub(crate) metro: Option<crate::metro::MetroModules>,
     pub(crate) roots: BTreeMap<FunctionId, crate::wrap::RootAttachment>,
     /// Wrapped app functions, each with the appended function now holding its original body.
     pub(crate) relocated: BTreeMap<FunctionId, FunctionId>,
@@ -144,6 +145,7 @@ impl<'a> Editor<'a> {
                 module_exports: Vec::new(),
                 string_switches,
                 hook_graph: None,
+                metro: None,
                 roots: BTreeMap::new(),
                 relocated: BTreeMap::new(),
                 discarded: BTreeSet::new(),

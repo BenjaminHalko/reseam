@@ -7,6 +7,7 @@ import app.reseam.patch.CodeScope
 import app.reseam.patch.FunctionTarget
 import app.reseam.patch.JsExport
 import app.reseam.patch.MethodTarget
+import app.reseam.patch.MetroModule
 import app.reseam.patch.Otherwise
 import app.reseam.patch.PointTarget
 import app.reseam.patch.Type
@@ -72,6 +73,15 @@ class GateScope internal constructor(val setting: ToggleSetting) {
         wrapBound(
             AppRuntimeJs.wrapWhen,
             bound() + HermesArgument.Export(HermesExportRef(export.module.source, export.name)),
+        )
+
+    fun FunctionTarget.wrap(export: JsExport, vararg modules: MetroModule) =
+        wrapBound(
+            AppRuntimeJs.wrapWithModulesWhen,
+            bound() +
+                HermesArgument.Export(HermesExportRef(export.module.source, export.name)) +
+                HermesArgument.Int(modules.size) +
+                modules.map { it.argument },
         )
 
     fun FunctionTarget.alwaysReturn() = wrapBound(AppRuntimeJs.skipWhen, bound())
