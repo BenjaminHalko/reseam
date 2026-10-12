@@ -251,7 +251,7 @@ pub(crate) struct StringValue<'a> {
 }
 
 impl StringValue<'_> {
-    fn units(self) -> impl Iterator<Item = u16> {
+    pub(crate) fn units(self) -> impl Iterator<Item = u16> {
         let (latin1, utf16) = match self.encoding {
             Encoding::Latin1 => (self.bytes, &[][..]),
             Encoding::Utf16 => (&[][..], self.bytes.as_chunks::<2>().0),

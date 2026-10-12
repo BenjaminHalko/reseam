@@ -19,14 +19,13 @@ use crate::{FunctionId, HermesFile};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModuleId(pub(crate) u32);
 
-struct Remapping {
-    strings: Vec<u32>,
-    function_base: u32,
-    bigint_base: u32,
-    regexp_base: u32,
-    shape_base: u32,
-    switch_base: u32,
-    values: BTreeMap<u32, u32>,
+/// Where a linked module's IDs start in the merged file, by kind.
+struct Bases {
+    function: u32,
+    bigint: u32,
+    regexp: u32,
+    shape: u32,
+    switch: u32,
 }
 
 impl Editor<'_> {
@@ -84,28 +83,26 @@ impl Editor<'_> {
                 id += 1;
             }
         }
-        let value_base = self.section_size(Section::Values) as u32;
-        let key_base = self.section_size(Section::Keys) as u32;
-        let (values, value_offsets) =
-            remap_literals(module.section(Section::Values), &strings, value_base)?;
-        let (keys, key_offsets) =
-            remap_literals(module.section(Section::Keys), &strings, key_base)?;
-        let remapping = Remapping {
-            strings,
-            function_base: self.next_function().0,
-            bigint_base: self.section_count(Section::BigInts),
-            regexp_base: self.section_count(Section::Regexps),
-            shape_base: self.section_count(Section::Shapes),
-            switch_base: self.edits.string_switches,
-            values: value_offsets,
+        let bases = Bases {
+            function: self.next_function().0,
+            bigint: self.section_count(Section::BigInts),
+            regexp: self.section_count(Section::Regexps),
+            shape: self.section_count(Section::Shapes),
+            switch: self.edits.string_switches,
         };
-        self.edits.additions[Section::Values as usize].extend(values);
-        self.edits.additions[Section::Keys as usize].extend(keys);
-        for entry in module.section(Section::Shapes).as_chunks::<8>().0 {
-            let old_offset = read_u32(entry, 0)?;
-            let offset = key_offsets
-                .get(&old_offset)
-                .ok_or_else(|| invalid(old_offset as usize, "shape starts outside key buffer"))?;
+        let shapes = module.section(Section::Shapes).as_chunks::<8>().0;
+        let mut values = Literals::new(
+            module.section(Section::Values),
+            &strings,
+            self.section_size(Section::Values) as u32,
+        );
+        let mut keys = Literals::new(
+            module.section(Section::Keys),
+            &strings,
+            self.section_size(Section::Keys) as u32,
+        );
+        for entry in shapes {
+            let offset = keys.relocate(read_u32(entry, 0)?, read_u32(entry, 4)?)?;
             self.edits.additions[Section::Shapes as usize].extend_from_slice(&offset.to_le_bytes());
             self.edits.additions[Section::Shapes as usize].extend_from_slice(&entry[4..]);
         }
@@ -128,61 +125,58 @@ impl Editor<'_> {
             let mut instructions = function.instructions()?;
             for inst in &mut instructions {
                 let at = at(inst);
+                let read_values = literal_count(inst, shapes)?;
                 for (operand, value) in inst.definition().operands.iter().zip(&mut inst.values) {
                     *value = u64::from(match operand.id {
                         IdKind::None => continue,
-                        IdKind::String => *remapping
-                            .strings
+                        IdKind::String => *strings
                             .get(*value as usize)
                             .ok_or_else(|| invalid(at, "string ID out of range"))?,
                         IdKind::Function => {
-                            checked_id(*value, module.function_count(), remapping.function_base)?
+                            checked_id(*value, module.function_count(), bases.function)?
                         }
-                        IdKind::BigInt => checked_id(
-                            *value,
-                            module.field(Field::BigIntCount),
-                            remapping.bigint_base,
-                        )?,
-                        IdKind::RegExp => checked_id(
-                            *value,
-                            module.field(Field::RegExpCount),
-                            remapping.regexp_base,
-                        )?,
-                        IdKind::Shape => checked_id(
-                            *value,
-                            module.field(Field::ObjectShapeCount),
-                            remapping.shape_base,
-                        )?,
+                        IdKind::BigInt => {
+                            checked_id(*value, module.field(Field::BigIntCount), bases.bigint)?
+                        }
+                        IdKind::RegExp => {
+                            checked_id(*value, module.field(Field::RegExpCount), bases.regexp)?
+                        }
+                        IdKind::Shape => {
+                            checked_id(*value, module.field(Field::ObjectShapeCount), bases.shape)?
+                        }
                         IdKind::Switch => checked_id(
                             *value,
                             module.field(Field::StringSwitchCount),
-                            remapping.switch_base,
+                            bases.switch,
                         )?,
-                        IdKind::ValueBuffer => *remapping
-                            .values
-                            .get(&(*value as u32))
-                            .ok_or_else(|| invalid(at, "literal offset out of range"))?,
+                        IdKind::ValueBuffer => values.relocate(
+                            *value as u32,
+                            read_values
+                                .ok_or_else(|| invalid(at, "value buffer without a length"))?,
+                        )?,
                     });
                 }
             }
-            let mut edited = assemble(&function, instructions, Some(&remapping.strings))?;
-            edited.header.name = remapping.strings[function.header.name as usize];
+            let mut edited = assemble(&function, instructions, Some(&strings))?;
+            edited.header.name = strings[function.header.name as usize];
             self.append_function(edited);
         }
+        self.edits.additions[Section::Values as usize].extend(values.output);
+        self.edits.additions[Section::Keys as usize].extend(keys.output);
         self.edits.string_switches = self
             .edits
             .string_switches
             .checked_add(module.field(Field::StringSwitchCount))
             .ok_or_else(|| invalid(0, "too many string switches"))?;
         let module_id = ModuleId(self.edits.modules.len() as u32);
-        self.edits.modules.push(FunctionId(
-            remapping.function_base + module.global_function().0,
-        ));
+        self.edits
+            .modules
+            .push(FunctionId(bases.function + module.global_function().0));
         let exports = crate::exports::exports(module)?;
         self.edits.module_exports.push(
             exports
                 .into_iter()
-                .map(|id| StringId(remapping.strings[id.0 as usize]))
+                .map(|id| StringId(strings[id.0 as usize]))
                 .collect(),
         );
         self.refresh_bootstrap()?;
@@ -329,57 +323,270 @@ impl Literal {
     }
 }
 
-/// Copies a literal buffer with its string IDs remapped. Short strings become
-/// long strings, since remapped IDs need not fit 16 bits. Returns the copy and
-/// each run's new offset by its old one.
-fn remap_literals(
-    source: &[u8],
-    strings: &[u32],
+/// How many literals an instruction reads from the value buffer: an array's
+/// static elements, or one value per property of an object's shape.
+fn literal_count(inst: &Instruction, shapes: &[[u8; 8]]) -> Result<Option<u32>> {
+    let shape = |index: u64| {
+        shapes
+            .get(index as usize)
+            .map(|entry| read_u32(entry, 4))
+            .ok_or_else(|| invalid(at(inst), "shape ID out of range"))?
+    };
+    Ok(match inst.op {
+        Op::NewArrayWithBuffer | Op::NewArrayWithBufferLong => Some(inst.values[2] as u32),
+        Op::NewObjectWithBuffer | Op::NewObjectWithBufferLong => Some(shape(inst.values[1])?),
+        Op::NewObjectWithBufferAndParent => Some(shape(inst.values[2])?),
+        _ => None,
+    })
+}
+
+/// A linked module's literal buffer, copied per reference. Hermes shares
+/// byte-identical literal sequences, so a reference may start inside another
+/// run; each one is read from its own offset and length, as the runtime reads
+/// it, and copied with its string IDs remapped. Short strings become long
+/// strings, since remapped IDs need not fit 16 bits.
+struct Literals<'a> {
+    source: &'a [u8],
+    strings: &'a [u32],
     base: u32,
-) -> Result<(Vec<u8>, BTreeMap<u32, u32>)> {
-    let mut output = Vec::new();
-    let mut offsets = BTreeMap::new();
-    let mut cursor = 0;
-    while cursor < source.len() {
-        offsets.insert(cursor as u32, base + output.len() as u32);
-        let tag = source[cursor];
+    output: Vec<u8>,
+    copies: BTreeMap<(u32, u32), u32>,
+}
+
+impl<'a> Literals<'a> {
+    fn new(source: &'a [u8], strings: &'a [u32], base: u32) -> Self {
+        Self {
+            source,
+            strings,
+            base,
+            output: Vec::new(),
+            copies: BTreeMap::new(),
+        }
+    }
+
+    /// The offset of the copy of `count` literals read from `offset`.
+    fn relocate(&mut self, offset: u32, count: u32) -> Result<u32> {
+        if let Some(&copy) = self.copies.get(&(offset, count)) {
+            return Ok(copy);
+        }
+        let copy = u32::try_from(self.output.len())
+            .ok()
+            .and_then(|length| self.base.checked_add(length))
+            .ok_or_else(|| invalid(offset as usize, "literal buffer offset overflow"))?;
+        let literals = read_literals(self.source, offset as usize, count as usize)?;
+        for run in literals.chunk_by(|a, b| a.kind == b.kind) {
+            for run in run.chunks(MAX_RUN) {
+                let kind = match run[0].kind {
+                    Literal::ShortString => Literal::LongString,
+                    kind => kind,
+                };
+                if run.len() > usize::from(Literal::LENGTH) {
+                    self.output
+                        .push(Literal::LONG_RUN | kind.tag() | (run.len() >> 8) as u8);
+                    self.output.push(run.len() as u8);
+                } else {
+                    self.output.push(kind.tag() | run.len() as u8);
+                }
+                for literal in run {
+                    match literal.kind {
+                        Literal::ShortString | Literal::LongString => {
+                            let id = self.strings.get(literal.string_id()? as usize).ok_or_else(
+                                || invalid(offset as usize, "literal string ID out of range"),
+                            )?;
+                            self.output.extend_from_slice(&id.to_le_bytes());
+                        }
+                        _ => self.output.extend_from_slice(literal.bytes),
+                    }
+                }
+            }
+        }
+        self.copies.insert((offset, count), copy);
+        Ok(copy)
+    }
+}
+
+/// The longest run a tag and its second length byte can describe.
+const MAX_RUN: usize = 0xfff;
+
+/// One literal of a buffer: its kind and its encoded value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LiteralValue<'a> {
+    kind: Literal,
+    bytes: &'a [u8],
+}
+
+impl LiteralValue<'_> {
+    fn string_id(&self) -> Result<u32> {
+        match self.kind {
+            Literal::ShortString => Ok(u32::from(u16::from_le_bytes([
+                self.bytes[0],
+                self.bytes[1],
+            ]))),
+            Literal::LongString => read_u32(self.bytes, 0),
+            _ => Err(invalid(0, "literal is not a string")),
+        }
+    }
+}
+
+/// Reads `count` literals from `offset` the way the runtime does: run by run,
+/// stopping inside a run once `count` literals are read.
+fn read_literals(source: &[u8], offset: usize, count: usize) -> Result<Vec<LiteralValue<'_>>> {
+    let mut literals = Vec::with_capacity(count);
+    let mut cursor = offset;
+    while literals.len() < count {
+        let tag = slice(source, cursor, 1)?[0];
         cursor += 1;
-        let long_run = tag & Literal::LONG_RUN != 0;
-        let mut count = usize::from(tag & Literal::LENGTH);
-        if long_run {
-            count = count << 8 | usize::from(slice(source, cursor, 1)?[0]);
+        let mut length = usize::from(tag & Literal::LENGTH);
+        if tag & Literal::LONG_RUN != 0 {
+            length = length << 8 | usize::from(slice(source, cursor, 1)?[0]);
             cursor += 1;
         }
-        if count == 0 {
+        if length == 0 {
             return Err(invalid(cursor, "empty literal run"));
         }
         let kind = Literal::decode(tag);
-        let remapped = if kind == Literal::ShortString {
-            Literal::LongString
-        } else {
-            kind
-        };
-        output.push(tag & !Literal::MASK | remapped.tag());
-        if long_run {
-            output.push(count as u8);
+        for _ in 0..length.min(count - literals.len()) {
+            literals.push(LiteralValue {
+                kind,
+                bytes: slice(source, cursor, kind.size())?,
+            });
+            cursor += kind.size();
         }
-        let data = slice(source, cursor, count * kind.size())?;
-        if matches!(kind, Literal::LongString | Literal::ShortString) {
-            for entry in data.chunks_exact(kind.size()) {
-                let id = if kind == Literal::ShortString {
-                    u32::from(u16::from_le_bytes([entry[0], entry[1]]))
-                } else {
-                    read_u32(entry, 0)?
-                };
-                let id = strings
-                    .get(id as usize)
-                    .ok_or_else(|| invalid(cursor, "literal string ID out of range"))?;
-                output.extend_from_slice(&id.to_le_bytes());
-            }
-        } else {
-            output.extend_from_slice(data);
-        }
-        cursor += data.len();
     }
-    Ok((output, offsets))
+    Ok(literals)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use reseam_storage::Bytes;
+
+    use super::*;
+    use crate::{FunctionId, HermesImage};
+
+    /// A literal as text and bytes, comparable across files whose string IDs differ.
+    #[derive(Debug, PartialEq)]
+    enum Value {
+        Text(Vec<u16>),
+        Other(Literal, Vec<u8>),
+    }
+
+    fn values(file: &HermesFile<'_>, buffer: Section, offset: u64, count: u32) -> Vec<Value> {
+        read_literals(file.section(buffer), offset as usize, count as usize)
+            .expect("fixture literals decode")
+            .into_iter()
+            .map(|literal| match literal.kind {
+                Literal::ShortString | Literal::LongString => Value::Text(
+                    file.string(StringId(literal.string_id().expect("string literal")))
+                        .expect("literal string exists")
+                        .units()
+                        .collect(),
+                ),
+                kind => Value::Other(kind, literal.bytes.to_vec()),
+            })
+            .collect()
+    }
+
+    fn operand(inst: &Instruction, kind: IdKind) -> Option<u64> {
+        inst.operands()
+            .find(|(operand, _)| operand.id == kind)
+            .map(|(_, value)| value)
+    }
+
+    /// Offsets where a run starts when the buffer is read from its beginning.
+    fn run_starts(buffer: &[u8]) -> BTreeSet<u64> {
+        let mut starts = BTreeSet::new();
+        let mut cursor = 0;
+        while cursor < buffer.len() {
+            starts.insert(cursor as u64);
+            let tag = buffer[cursor];
+            let mut length = usize::from(tag & Literal::LENGTH);
+            let mut header = 1;
+            if tag & Literal::LONG_RUN != 0 {
+                length = length << 8 | usize::from(buffer[cursor + 1]);
+                header = 2;
+            }
+            cursor += header + length * Literal::decode(tag).size();
+        }
+        starts
+    }
+
+    #[test]
+    fn linked_literals_read_back_the_values_and_keys_of_the_module() {
+        let host = HermesImage::parse(Bytes::from_slice(include_bytes!("../fixtures/host.hbc")))
+            .expect("host fixture parses");
+        let module = HermesImage::parse(Bytes::from_slice(include_bytes!(
+            "../fixtures/literals.hbc"
+        )))
+        .expect("module fixture parses");
+        let module_file = module.file();
+        let host_functions = host.file().function_count();
+        let mut editor = Editor::new(host.file());
+        editor.link(&module_file).expect("module links");
+        let mut output = Vec::new();
+        editor.write(&mut output).expect("linked file writes");
+        let linked = HermesImage::parse(Bytes::from_vec(output)).expect("linked file parses");
+        let linked_file = linked.file();
+
+        let source_shapes = module_file.section(Section::Shapes).as_chunks::<8>().0;
+        let linked_shapes = linked_file.section(Section::Shapes).as_chunks::<8>().0;
+        let starts = run_starts(module_file.section(Section::Values));
+        let mut inside_a_run = false;
+        for id in 0..module_file.function_count() {
+            let source = module_file
+                .function(FunctionId(id))
+                .unwrap()
+                .instructions()
+                .unwrap();
+            let copy = linked_file
+                .function(FunctionId(host_functions + id))
+                .unwrap()
+                .instructions()
+                .unwrap();
+            for (source, copy) in source.iter().zip(&copy) {
+                let Some(count) = literal_count(source, source_shapes).unwrap() else {
+                    continue;
+                };
+                let (from, to) = (
+                    operand(source, IdKind::ValueBuffer).unwrap(),
+                    operand(copy, IdKind::ValueBuffer).unwrap(),
+                );
+                inside_a_run |= !starts.contains(&from);
+                assert_eq!(
+                    values(&module_file, Section::Values, from, count),
+                    values(&linked_file, Section::Values, to, count),
+                    "values of {:?} in function {id}",
+                    source.op
+                );
+                if let (Some(from), Some(to)) =
+                    (operand(source, IdKind::Shape), operand(copy, IdKind::Shape))
+                {
+                    let key = |shapes: &[[u8; 8]], index: u64| {
+                        read_u32(&shapes[index as usize], 0).unwrap()
+                    };
+                    assert_eq!(
+                        values(
+                            &module_file,
+                            Section::Keys,
+                            u64::from(key(source_shapes, from)),
+                            count
+                        ),
+                        values(
+                            &linked_file,
+                            Section::Keys,
+                            u64::from(key(linked_shapes, to)),
+                            count
+                        ),
+                        "keys of {:?} in function {id}",
+                        source.op
+                    );
+                }
+            }
+        }
+        assert!(
+            inside_a_run,
+            "the fixture shares a literal sequence inside another run"
+        );
+    }
 }
