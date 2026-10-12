@@ -7,62 +7,34 @@ package app.reseam.patch.settings
 
 import app.reseam.patch.ActiveRuntime
 import app.reseam.patch.CompatiblePackage
-import app.reseam.patch.ExtClass
-import app.reseam.patch.ExtJsModule
 import app.reseam.patch.PatchDeclaration
 import app.reseam.patch.PatchRuntime
 import app.reseam.patch.ReseamPatch
-import app.reseam.patch.Type
+import app.reseam.patch.appEntry
 import kotlin.properties.PropertyDelegateProvider
 import kotlin.properties.ReadOnlyProperty
 
-/** The runtime class patched apps read settings through; linked from the bundle on first use. */
-object ReseamSettings : ExtClass("app.reseam.runtime.settings.ReseamSettings") {
-    val getBoolean by static(Type.String, Type.Boolean, returns = Type.Boolean)
-    val getString by static(Type.String, Type.String, returns = Type.String)
-}
-
 /**
- * The runtime's settings screen, shown over the app's current screen with no activity of its own,
- * so a build that opens it also works mounted over the installed app.
+ * A user-facing setting stored in the patched app and shown on the bundle's settings screen. Its
+ * [key] is unique within the bundle; other bundles keep their own settings.
  */
-object ReseamSettingsScreen : ExtClass("app.reseam.runtime.settings.ReseamSettingsScreen") {
-    /** Opens the settings. Callable from any thread once [ReseamSettings] is initialized. */
-    val open by static()
-
-    /**
-     * Starts an intent, or opens the settings when its action is [SETTINGS_OPEN_ACTION]. Redirect
-     * the `startActivity` call of a settings row the app builds from an intent to this.
-     */
-    val startActivity by static("android.content.Context", "android.content.Intent")
-}
-
-/** The intent action [ReseamSettingsScreen.startActivity] opens the settings for. */
-const val SETTINGS_OPEN_ACTION = "app.reseam.settings.OPEN"
-
-/**
- * The JavaScript the Hermes gates call, provided by the patch bundle. It reads [ReseamSettings]
- * through the `ReseamSettings` React Native module that the app's settings host registers.
- */
-internal object ReseamJsSettings : ExtJsModule("settings-js") {
-    val skipWhen by export()
-    val returnNullWhen by export()
-    val returnWhen by export()
-    val wrapWhen by export()
-    val setArgumentWhen by export()
-}
-
-const val SETTINGS_SCHEMA_PATH = "assets/reseam/settings.json"
-
-/**
- * A user-facing setting stored in the patched app, shown by the settings screen the host installs.
- */
-sealed class Setting<T>(val key: String, val title: String, val summary: String?, val default: T) {
+sealed class Setting<T>(
+    val key: String,
+    val title: String,
+    val summary: String?,
+    val default: T,
+    val icon: Vector?,
+) {
     override fun toString() = key
 }
 
-class ToggleSetting(key: String, title: String, summary: String? = null, default: Boolean) :
-    Setting<Boolean>(key, title, summary, default)
+class ToggleSetting(
+    key: String,
+    title: String,
+    summary: String? = null,
+    default: Boolean,
+    icon: Vector? = null,
+) : Setting<Boolean>(key, title, summary, default, icon)
 
 /** [multiline] lets the value hold one entry per line. */
 class TextSetting(
@@ -71,10 +43,16 @@ class TextSetting(
     summary: String? = null,
     default: String,
     val multiline: Boolean = false,
-) : Setting<String>(key, title, summary, default)
+    icon: Vector? = null,
+) : Setting<String>(key, title, summary, default, icon)
 
-class FolderSetting(key: String, title: String, summary: String? = null, default: String) :
-    Setting<String>(key, title, summary, default)
+class FolderSetting(
+    key: String,
+    title: String,
+    summary: String? = null,
+    default: String,
+    icon: Vector? = null,
+) : Setting<String>(key, title, summary, default, icon)
 
 class ChoiceSetting(
     key: String,
@@ -82,7 +60,8 @@ class ChoiceSetting(
     summary: String? = null,
     default: String,
     val choices: List<Choice>,
-) : Setting<String>(key, title, summary, default) {
+    icon: Vector? = null,
+) : Setting<String>(key, title, summary, default, icon) {
     init {
         require(choices.any { it.value == default }) {
             "Choice setting '$key' defaults to '$default', which is not a choice"
@@ -91,17 +70,22 @@ class ChoiceSetting(
 
     /** The same stored setting with other choices, for a patch that extends it from its options. */
     fun copy(default: String = this.default, choices: List<Choice> = this.choices) =
-        ChoiceSetting(key, title, summary, default, choices)
+        ChoiceSetting(key, title, summary, default, choices, icon)
 }
 
 data class Choice(val value: String, val title: String)
 
-/** A reusable destination. Parents allow arbitrary nesting; lower orders appear first. */
+/**
+ * A reusable destination, shown as a row on its parent page. Parents allow arbitrary nesting; lower
+ * orders appear first.
+ */
 data class SettingsPage(
     val id: String,
     val title: String,
     val parent: SettingsPage? = null,
     val order: Int = 0,
+    val summary: String? = null,
+    val icon: Vector? = null,
 ) {
     init {
         require(id.isNotBlank()) { "A settings page needs a non-blank id" }
@@ -131,8 +115,13 @@ fun section(page: SettingsPage, title: String, vararg settings: Setting<*>) =
  * Declares a setting as a property: `val hideAds by toggle("Hide ads", default = true)`. The key
  * derives from the owner and property names unless given.
  */
-fun toggle(title: String, summary: String? = null, default: Boolean, key: String? = null) =
-    SettingDelegate(key) { ToggleSetting(it, title, summary, default) }
+fun toggle(
+    title: String,
+    summary: String? = null,
+    default: Boolean,
+    key: String? = null,
+    icon: Vector? = null,
+) = SettingDelegate(key) { ToggleSetting(it, title, summary, default, icon) }
 
 fun text(
     title: String,
@@ -140,10 +129,16 @@ fun text(
     default: String,
     multiline: Boolean = false,
     key: String? = null,
-) = SettingDelegate(key) { TextSetting(it, title, summary, default, multiline) }
+    icon: Vector? = null,
+) = SettingDelegate(key) { TextSetting(it, title, summary, default, multiline, icon) }
 
-fun folder(title: String, summary: String? = null, default: String, key: String? = null) =
-    SettingDelegate(key) { FolderSetting(it, title, summary, default) }
+fun folder(
+    title: String,
+    summary: String? = null,
+    default: String,
+    key: String? = null,
+    icon: Vector? = null,
+) = SettingDelegate(key) { FolderSetting(it, title, summary, default, icon) }
 
 fun choice(
     title: String,
@@ -151,7 +146,8 @@ fun choice(
     default: String,
     choices: List<Choice>,
     key: String? = null,
-) = SettingDelegate(key) { ChoiceSetting(it, title, summary, default, choices) }
+    icon: Vector? = null,
+) = SettingDelegate(key) { ChoiceSetting(it, title, summary, default, choices, icon) }
 
 class SettingDelegate<S : Setting<*>>
 internal constructor(
@@ -181,9 +177,9 @@ internal fun snakeCase(name: String): String = buildString {
 }
 
 /**
- * The internal patch that installs the settings runtime and screen for one app. Patches register
- * their sections with it; after they have all run it writes the schema the runtime reads and runs
- * the app-specific install.
+ * The internal patch that gives one app the running bundle's settings screen. Patches register
+ * their sections with it; after they have all run it writes the bundle's settings into the app,
+ * links the app runtime, and runs the app-specific install.
  */
 class SettingsHost
 internal constructor(
@@ -191,6 +187,7 @@ internal constructor(
     override val compatibleWith: List<CompatiblePackage>,
     override val dependencies: List<ReseamPatch>,
     private val ownSections: List<SettingsSection>,
+    private val brand: Brand,
     private val install: PatchRuntime.() -> Unit,
 ) : ReseamPatch {
     override val name: String? = null
@@ -203,7 +200,7 @@ internal constructor(
         }
     }
 
-    /** The host runs before dependents, so its own sections lead the schema. */
+    /** The host runs before dependents, so its own sections lead the screen. */
     override fun execute(ctx: PatchRuntime) {
         ctx.run.clear(this)
         register(this, ownSections)
@@ -211,62 +208,13 @@ internal constructor(
 
     override fun afterDependents(ctx: PatchRuntime) {
         try {
-            ctx.files.write(SETTINGS_SCHEMA_PATH, schema(ctx).toByteArray(Charsets.UTF_8))
+            ctx.run.claimSettings(ctx.bundle.name, this)
+            SettingsFiles(ctx.bundle, brand, ctx.run.sections(this)).write(ctx.files)
             ctx.install()
+            // appEntry code runs newest first, so this init precedes every other entry hook.
+            appEntry { call(Reseam.init, application) }
         } finally {
             ctx.run.clear(this)
-        }
-    }
-
-    private fun schema(ctx: PatchRuntime): String {
-        val sections = ctx.run.sections(this).filter { it.settings.isNotEmpty() }
-        val pages = linkedMapOf<String, SettingsPage>()
-        fun addPage(page: SettingsPage) {
-            page.parent?.let(::addPage)
-            val previous = pages.putIfAbsent(page.id, page)
-            require(previous == null || previous == page) {
-                "Conflicting settings page '${page.id}'"
-            }
-        }
-        sections.forEach { it.page?.let(::addPage) }
-
-        return buildString {
-            append("{\"appId\":")
-            appendJson(appId)
-            append(",\"pages\":[")
-            pages.values
-                .sortedBy { it.order }
-                .forEachIndexed { index, page ->
-                    if (index > 0) append(',')
-                    append("{\"id\":")
-                    appendJson(page.id)
-                    append(",\"title\":")
-                    appendJson(page.title)
-                    append(",\"parent\":")
-                    page.parent?.let { appendJson(it.id) } ?: append("null")
-                    append('}')
-                }
-            append("],\"sections\":[")
-            sections
-                .groupBy { it.page?.id to it.title }
-                .entries
-                .forEachIndexed { index, (location, contributions) ->
-                    if (index > 0) append(',')
-                    append("{\"page\":")
-                    location.first?.let(::appendJson) ?: append("null")
-                    append(",\"title\":")
-                    appendJson(location.second)
-                    append(",\"settings\":[")
-                    contributions
-                        .flatMap { it.settings }
-                        .distinctBy { it.key }
-                        .forEachIndexed { settingIndex, setting ->
-                            if (settingIndex > 0) append(',')
-                            appendSetting(setting)
-                        }
-                    append("]}")
-                }
-            append("]}")
         }
     }
 
@@ -276,14 +224,21 @@ internal constructor(
 class SettingsHostBuilder internal constructor() : PatchDeclaration() {
     private var installBlock: PatchRuntime.() -> Unit = {}
     private val sections = mutableListOf<SettingsSection>()
+    private var brand = Brand.DEFAULT
 
     /** Sections the host owns, for settings that belong to no single feature patch. */
     fun settings(vararg sections: SettingsSection) {
         this.sections += sections
     }
 
+    /** How the settings screen and the components the bundle's extensions build look. */
+    fun brand(brand: Brand) {
+        this.brand = brand
+    }
+
     /**
-     * Wires the settings screen into the app; runs once every patch has registered its sections.
+     * Wires the settings screen into the app, typically a row in the app's own settings that calls
+     * [openSettings]; runs once every patch has registered its sections.
      */
     fun install(block: PatchRuntime.() -> Unit) {
         installBlock = block
@@ -295,67 +250,10 @@ class SettingsHostBuilder internal constructor() : PatchDeclaration() {
             compatibility.toList(),
             dependencies.toList(),
             sections.toList(),
+            brand,
             installBlock,
         )
 }
 
 fun settingsHost(appId: String, block: SettingsHostBuilder.() -> Unit): SettingsHost =
     SettingsHostBuilder().apply(block).build(appId)
-
-private fun StringBuilder.appendSetting(setting: Setting<*>) {
-    append("{\"type\":")
-    appendJson(
-        when (setting) {
-            is ToggleSetting -> "toggle"
-            is TextSetting -> "text"
-            is FolderSetting -> "folder"
-            is ChoiceSetting -> "choice"
-        }
-    )
-    append(",\"key\":")
-    appendJson(setting.key)
-    append(",\"title\":")
-    appendJson(setting.title)
-    append(",\"summary\":")
-    setting.summary?.let(::appendJson) ?: append("null")
-    append(",\"default\":")
-    when (setting) {
-        is ToggleSetting -> append(setting.default)
-        is TextSetting -> appendJson(setting.default)
-        is FolderSetting -> appendJson(setting.default)
-        is ChoiceSetting -> appendJson(setting.default)
-    }
-    if (setting is TextSetting && setting.multiline) append(",\"multiline\":true")
-    if (setting is ChoiceSetting) {
-        append(",\"choices\":[")
-        setting.choices.forEachIndexed { index, choice ->
-            if (index > 0) append(',')
-            append("{\"value\":")
-            appendJson(choice.value)
-            append(",\"title\":")
-            appendJson(choice.title)
-            append("}")
-        }
-        append("]")
-    }
-    append("}")
-}
-
-private fun StringBuilder.appendJson(value: String) {
-    append('"')
-    for (ch in value) {
-        when (ch) {
-            '\\' -> append("\\\\")
-            '"' -> append("\\\"")
-            '\b' -> append("\\b")
-            '' -> append("\\f")
-            '\n' -> append("\\n")
-            '\r' -> append("\\r")
-            '\t' -> append("\\t")
-            else ->
-                if (ch.code < 0x20) append("\\u" + ch.code.toString(16).padStart(4, '0'))
-                else append(ch)
-        }
-    }
-    append('"')
-}

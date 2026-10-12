@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use reseam_storage::ScratchDir;
@@ -11,9 +11,11 @@ use jni::objects::{Global, JClass, JObject, JObjectArray, JValue, JValueOwned};
 use jni::refs::IntoAuto;
 use jni::{Env, jni_sig, jni_str};
 
+use super::handles::RunningBundle;
 use super::jvm::{self, jvm_err};
 use super::metadata::{object, read_patch, string};
 use super::patch::load_class;
+use crate::bundle::BundleInfo;
 use crate::bundle::declarations::declarations;
 use crate::bundle::index::{Declaration, MemberKind};
 use crate::error::Result;
@@ -24,6 +26,9 @@ const EXTERNAL_PATCH: &str = "app.reseam.patch.ExternalPatch";
 
 pub(super) struct PatchLoader {
     reference: Global<JObject<'static>>,
+    name: String,
+    version: String,
+    license: String,
     directory: Arc<ScratchDir>,
 }
 
@@ -32,8 +37,13 @@ impl PatchLoader {
         self.reference.as_ref()
     }
 
-    pub(super) fn directory(&self) -> &Path {
-        self.directory.path()
+    pub(super) fn running(&self) -> RunningBundle {
+        RunningBundle {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            license: self.license.clone(),
+            directory: self.directory.path().to_path_buf(),
+        }
     }
 }
 
@@ -80,7 +90,7 @@ pub(super) struct Found {
 pub fn load_patches(
     jars: &[PathBuf],
     directory: Arc<ScratchDir>,
-    bundle: &str,
+    bundle: &BundleInfo,
 ) -> Result<Vec<Patch>> {
     let declarations = declarations(jars)?;
     if declarations.is_empty() {
@@ -92,6 +102,9 @@ pub fn load_patches(
             let loader = create_class_loader(env, jars)?;
             let retained_loader = Arc::new(PatchLoader {
                 reference: env.new_global_ref(&loader)?,
+                name: bundle.name.clone(),
+                version: bundle.version.clone(),
+                license: bundle.license.clone(),
                 directory,
             });
             let loader = retained_loader.reference.as_ref();
@@ -131,7 +144,7 @@ pub fn load_patches(
                             &found,
                             &external_class,
                             &retained_loader,
-                            bundle,
+                            &bundle.name,
                         )
                     })
                 })

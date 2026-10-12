@@ -102,6 +102,6 @@ gate(AppSettings.allFeatures) {
 }
 ```
 
-While the toggle is off, the unchanged function runs, so an export never checks settings itself. `setArgument(index, path, value)` calls the function with one property of an argument replaced; the function receives copies of the objects along the path. Each toggle is read once per process, through the `settings-js` extension in your bundle and the `ReseamSettings` React Native module that the app's settings host registers.
+While the toggle is off, the unchanged function runs, so an export never checks settings itself. `setArgument(index, path, value)` calls the function with one property of an argument replaced; the function receives copies of the objects along the path. Each toggle is read once per process through the [app runtime](5_settings.md#react-native-apps), whose React Native package your settings host adds to the app.
 
 See the [reference](reference.md#hermes) for the authoring API.

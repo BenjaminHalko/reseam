@@ -80,6 +80,7 @@ Generators, async functions, class constructors, `new.target`, direct `eval` and
 | `ClassTarget.method(name, inherited = false) { MethodQuery }` | A method of the class by name, narrowed by the optional block. |
 | `ClassTarget.methods(debugName = null, inherited = false) { }` | Matching methods of the class. |
 | `ClassTarget.field(name)` | A field by name. `FieldTarget`. |
+| `ClassTarget.enumConstant(name)` | The field holding the enum constant whose `name()` is `name`, even when obfuscation renamed it. `FieldTarget`. |
 | `ClassTarget.fieldOfType(type)` | The one instance field of that type. |
 | `field(owner, name, type)` | A field reference without lookup. |
 | `methodTarget(debugName) { PatchRuntime.() -> Method }` | A method resolved by hand. |
@@ -91,7 +92,7 @@ Generators, async functions, class constructors, `new.target`, direct `eval` and
 
 `MethodQuery`: `name`, `strings`, `stringsStartingWith(prefix)`, `literals`, `returns`, `params`, `param(index, type)`, `hasParam`, `paramCount`, `flags`, `inClass(target, inherited = false)`, `calls(target)`, `calls(ref)`, `calls { MethodRefMatch }`, `calledBy`, `callsMethod { MethodRef }`, `opcode`, `opcodeSequence`, `custom { Method }`, `rankBy(label) { MethodRankScope }`, `first()`, `includeExtensions()`.
 
-`ClassQuery`: `strings`, `hasInstanceField`, `extends`, `implements`, `sourceFile`, `custom { DexClass }`, `rankBy(label) { ClassRankScope }`, `first()`, `includeExtensions()`.
+`ClassQuery`: `strings`, `hasInstanceField`, `enumConstants(vararg names)`, `extends`, `implements`, `sourceFile`, `custom { DexClass }`, `rankBy(label) { ClassRankScope }`, `first()`, `includeExtensions()`.
 
 `RankScope`: `type`, `methods(proto)`, `zeroArgListGetters()`. `MethodRankScope` adds `method`, `paramCount`, `callSitesFollowedByCast(type, lookAhead = 40)`. `ClassRankScope` adds `classDef`.
 
@@ -130,7 +131,7 @@ Generators, async functions, class constructors, `new.target`, direct `eval` and
 | `MethodTarget.alwaysReturn()`, `(Boolean)`, `(Int)`, `(Long)`, `(String)`, `alwaysReturnNull()` | Replace the body with a constant return. |
 | `MethodTarget.replaceAllStrings(old, new)`, `replaceAllLiterals(old, new)` | Rewrite constants; returns the count. |
 
-`CodeScope`: `thisObject`, `param(i)`, `paramOfType(type)`, `lastParam`, `capture(name)`, `local(slot)`, `int`, `long`, `bool`, `string`, `nullObject`, `enumValue(type, name)`, `staticField(FieldTarget | FieldRef)`, `setStatic(FieldTarget | FieldRef, value)`, `newInstance(type, ctorProto = "()V", vararg args)`, `call(ExtMethod | MethodTarget, args)` (fails when the extension method does not exist or the argument count does not match), `callStatic(owner, name, proto, args)`, `whenTrue`, `whenFalse`, `whenNull`, `whenNotNull`, `whenEqual`, `whenNotEqual`, `whenInstanceOf(value, type)` (each returns `Otherwise` with `otherwise { }`), `returnVoid`, `returnValue`, `returnTrue`, `returnFalse`, `returnNull`.
+`CodeScope`: `thisObject`, `param(i)`, `paramOfType(type)`, `lastParam`, `capture(name)`, `local(slot)`, `int`, `long`, `bool`, `string`, `nullObject`, `enumValue(type, name)` (a constant by its field name; see `ClassTarget.enumConstant` for obfuscated enums), `staticField(FieldTarget | FieldRef)`, `setStatic(FieldTarget | FieldRef, value)`, `newInstance(type, ctorProto = "()V", vararg args)`, `call(ExtMethod | MethodTarget, args)` (fails when the extension method does not exist or the argument count does not match), `callStatic(owner, name, proto, args)`, `whenTrue`, `whenFalse`, `whenNull`, `whenNotNull`, `whenEqual`, `whenNotEqual`, `whenInstanceOf(value, type)` (each returns `Otherwise` with `otherwise { }`), `returnVoid`, `returnValue`, `returnTrue`, `returnFalse`, `returnNull`.
 
 `ValueRef`: `type`, `cast(type)`, `field(FieldTarget | FieldRef)`, `fieldOfType(type)`, `set(field, value)`, `assign(value)` (fails on a value read from a field), `call(ExtMethod | MethodTarget, args)`, `callVirtual(owner, name, proto, args)`, `callInterface(...)`, `size()`, `get(index)`, `plus`, `minus`.
 
@@ -199,23 +200,30 @@ Resource file and value helpers:
 
 | Symbol | Description |
 |---|---|
-| `toggle(title, summary = null, default, key = null)` | Property delegate for a `ToggleSetting`. |
-| `text(title, summary = null, default, multiline = false, key = null)`, `folder(title, summary = null, default, key = null)` | Property delegates for `TextSetting` and `FolderSetting`; `default` is a string. A `multiline` text setting holds one entry per line. |
+| `toggle(title, summary = null, default, key = null, icon = null)` | Property delegate for a `ToggleSetting`. |
+| `text(title, summary = null, default, multiline = false, key = null, icon = null)`, `folder(title, summary = null, default, key = null, icon = null)` | Property delegates for `TextSetting` and `FolderSetting`; `default` is a string. A `multiline` text setting holds one entry per line. |
 | `SettingDelegate<S>` | Derives an omitted key from the property name in snake case, prefixed by the declaring object or class name when present. |
-| `choice(title, summary = null, default, choices, key = null)` | `ChoiceSetting` with `Choice(value, title)`. |
-| `Setting<T>` | `key`, `title`, `summary`, `default`. |
-| `ToggleSetting(key, title, summary = null, default)` | Boolean setting with an explicit key. `TextSetting` and `FolderSetting` take the same arguments with a string default; `TextSetting` also takes `multiline = false`. |
-| `ChoiceSetting(key, title, summary = null, default, choices)` | String setting with a `List<Choice>`; each `Choice(value, title)` supplies the stored value and displayed title. `default` must be a choice. `copy(default, choices)` keeps the key. |
+| `choice(title, summary = null, default, choices, key = null, icon = null)` | `ChoiceSetting` with `Choice(value, title)`. |
+| `Setting<T>` | `key`, `title`, `summary`, `default`, `icon`. Keys are unique within a bundle; each bundle stores its settings apart. |
+| `ToggleSetting(key, title, summary = null, default, icon = null)` | Boolean setting with an explicit key. `TextSetting` and `FolderSetting` take the same arguments with a string default; `TextSetting` also takes `multiline = false`. |
+| `ChoiceSetting(key, title, summary = null, default, choices, icon = null)` | String setting with a `List<Choice>`; each `Choice(value, title)` supplies the stored value and displayed title. `default` must be a choice. `copy(default, choices)` keeps the key. |
 | `SettingsSection(title, settings, page = null)` | A `List<Setting<*>>` under a heading; null `page` places it at the root. |
-| `SettingsPage(id, title, parent = null, order = 0)` | A settings page; `parent` nests it, `order` sorts siblings. Only populated pages and their parents appear. |
+| `SettingsPage(id, title, parent = null, order = 0, summary = null, icon = null)` | A settings page, shown as a row on its parent; `parent` nests it, `order` sorts siblings. Only populated pages and their parents appear. |
 | `section(title, vararg settings)` | A root `SettingsSection`. |
 | `section(page, title, vararg settings)` | A section on a page; sections with the same page and title merge. |
-| `settingsHost(appId) { }` | An internal patch installing the settings runtime: `compatibleWith`, `dependsOn`, `settings(vararg sections)` for the host's own sections, `install { PatchRuntime }`. |
+| `settingsHost(appId) { }` | An internal patch giving the app the running bundle's settings screen: `compatibleWith`, `dependsOn`, `settings(vararg sections)` for the host's own sections, `brand(Brand)`, `install { PatchRuntime }`. It writes `assets/reseam/<bundle>/` and starts the app runtime first in the `Application`'s `onCreate`. One host per bundle and app. |
 | `SettingsHost` | A `ReseamPatch` with `appId`; `register(patch, sections)` collects contributions. `PatchBuilder.settings` registers them during execution. |
-| `ReseamSettings` | The runtime `ExtClass`: `getBoolean`, `getString`. |
-| `ReseamSettingsScreen` | The runtime screen `ExtClass`: `open` shows the settings over the app's current screen; `startActivity(Context, Intent)` opens them for an intent with `SETTINGS_OPEN_ACTION` and starts any other intent. |
-| `SETTINGS_OPEN_ACTION` | `app.reseam.settings.OPEN`. |
-| `SETTINGS_SCHEMA_PATH` | `assets/reseam/settings.json`. |
+| `CodeScope.openSettings()` | Opens the running bundle's settings over the app's current screen. |
+| `XmlElement.opensSettings()` | Makes an `<intent>` element open the running bundle's settings through `Reseam.startActivity`. |
+| `Reseam` | The app runtime's entry `ExtClass`: `startActivity(Context, Intent)` opens settings for an intent `opensSettings` set up, and starts any other intent. |
+| `ReseamReactPackage` | `addTo(List)` adds the React Native package Hermes gates read settings through to the app's package list, once however many bundles call it. |
+| `Brand(name, light, dark, logo = null, font = null, typography = Typography())` | How the settings screen and branded components look. `Brand.DEFAULT` is Material 3's baseline in the system font. |
+| `ColorScheme(...)` | The Material 3 roles the app runtime paints with, from `primary` to `scrim`. |
+| `Color.hex(value)` | `#rgb`, `#rrggbb`, or `#aarrggbb`. |
+| `Typography(headlineSmall, titleLarge, titleMedium, bodyLarge, bodyMedium, labelLarge, labelMedium)` | Type roles, defaulting to Material 3's; each a `TextStyle(size, lineHeight, weight, tracking = 0)` in sp. |
+| `Font(file)` | A TrueType or OpenType file; a variable font with a `wght` axis renders every weight. |
+| `Logo(light, dark = light)` | A brand's mark for each theme. |
+| `Vector.svg(source)` | A vector image from an SVG: paths and basic shapes with fills and strokes; `currentColor` takes the screen's icon color. |
 | `CodeScope.whenEnabled(toggle) { }` | Branch on a toggle at runtime; returns `Otherwise`. |
 | `gate(toggle) { GateScope }` | Hooks inside take effect only while the toggle is on. |
 | `GateScope` | `MethodTarget` and `PointTarget` `before { }`, `after { }`; `MethodTarget.alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / Long / String)`; `PointTarget.skip()`; `FunctionTarget.wrap(export)`, `alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / String)`, `setArgument(index, path, value)`. |

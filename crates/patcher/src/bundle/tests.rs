@@ -16,7 +16,7 @@ use super::*;
     clippy::used_underscore_binding,
     reason = "inspect the lifetime-owned extracted payload after public loading"
 )]
-fn signed_resources_round_trip() {
+fn signed_bundles_keep_their_resources_and_version() {
     let stage = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(stage.path().join("resources/drawable")).unwrap();
     std::fs::write(
@@ -27,8 +27,15 @@ fn signed_resources_round_trip() {
     let resource = vec![0x5a; 200_000];
     std::fs::write(stage.path().join("resources/drawable/icon.png"), &resource).unwrap();
     let out = stage.path().join("example.reseam");
-    pack(stage.path(), &SigningKey::from_bytes(&[42; 32]), &out).unwrap();
+    pack(
+        stage.path(),
+        Some("1.2.0"),
+        &SigningKey::from_bytes(&[42; 32]),
+        &out,
+    )
+    .unwrap();
     let archive = BundleArchive::open(&out).unwrap();
+    assert_eq!(archive.info().version, "1.2.0");
     assert_eq!(
         archive.files().collect::<Vec<_>>(),
         ["resources/drawable/icon.png"]
@@ -46,7 +53,9 @@ fn resource_archive(path: &Path, name: &str, declared: &[u8], actual: &[u8]) {
             name: "example".into(),
             author: String::new(),
             description: String::new(),
+            license: String::new(),
             format_version: BUNDLE_FORMAT_VERSION,
+            version: String::new(),
             engine: ENGINE_VERSION.into(),
         },
         files: BTreeMap::from([(name.into(), hex::encode(Sha256::digest(declared)))]),
@@ -242,7 +251,7 @@ public final class Declarations {
             )
             .unwrap();
             let out = self.dir.path().join("example.reseam");
-            pack(&stage, &SigningKey::from_bytes(&[42; 32]), &out)?;
+            pack(&stage, None, &SigningKey::from_bytes(&[42; 32]), &out)?;
             BundleArchive::open(&out)
         }
     }

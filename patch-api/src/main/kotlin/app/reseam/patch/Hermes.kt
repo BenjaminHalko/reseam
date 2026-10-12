@@ -9,6 +9,7 @@ import app.reseam.patch.native.hermesVersion
 import app.reseam.patch.native.hermesWrap
 import app.reseam.patch.types.HermesArgument
 import app.reseam.patch.types.HermesConstant
+import app.reseam.patch.types.HermesModule
 
 /**
  * The base APK's Hermes bytecode in `assets/index.android.bundle`, opened on first use and written
@@ -91,7 +92,7 @@ class FunctionTarget internal constructor(debugName: String?, private val query:
 
     /** Like [wrap], passing [bound] to [export] ahead of `original`. */
     internal fun wrapBound(export: JsExport, bound: List<HermesArgument>) =
-        hermesWrap(resolved, export.module.name, export.name, bound)
+        hermesWrap(resolved, export.module.source, export.name, bound)
 
     internal fun returnConstant(value: HermesConstant) = hermesAlwaysReturn(resolved, value)
 }
@@ -144,6 +145,9 @@ fun FunctionTarget.alwaysReturn(value: String) = returnConstant(HermesConstant.T
  * ```
  */
 open class ExtJsModule(val name: String) {
+    internal open val source: HermesModule
+        get() = HermesModule.Bundle(name)
+
     /**
      * Declares a callable property of the extension's exports object, named after the property, or
      * [name]. Validated on use.

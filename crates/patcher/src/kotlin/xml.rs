@@ -311,7 +311,7 @@ pub fn xml_clone_element(doc: u32, element: u32, deep: bool) -> u32 {
 mod tests {
     use super::*;
     use crate::context::PatchContext;
-    use crate::kotlin::handles::{ContextGuard, RunGuard, check_invocation};
+    use crate::kotlin::handles::{ContextGuard, RunGuard, RunningBundle, check_invocation};
     use crate::kotlin::manifest;
     use crate::kotlin::xml_attributes::{xml_get_attribute, xml_set_attribute};
     use crate::kotlin::xml_documents::{xml_close, xml_open};
@@ -322,7 +322,8 @@ mod tests {
         let (dir, mut apk) = crate::test_support::apk();
         let mut ctx = PatchContext::new(&mut apk);
         let _run = RunGuard::enter().unwrap();
-        let guard = ContextGuard::enter(&mut ctx, dir.path().to_owned()).unwrap();
+        let guard =
+            ContextGuard::enter(&mut ctx, RunningBundle::at(dir.path().to_owned())).unwrap();
         let outer = manifest::manifest_get_document(None).unwrap();
         let application = xml_find_by_tag(outer, "application".into())[0];
         let main = xml_find_by_attribute(outer, "android:name".into(), ".Main".into())[0];
@@ -389,7 +390,8 @@ mod tests {
         let (dir, mut apk) = crate::test_support::apk();
         let mut ctx = PatchContext::new(&mut apk);
         let _run = RunGuard::enter().unwrap();
-        let guard = ContextGuard::enter(&mut ctx, dir.path().to_owned()).unwrap();
+        let guard =
+            ContextGuard::enter(&mut ctx, RunningBundle::at(dir.path().to_owned())).unwrap();
         let document = manifest::manifest_get_document(None).unwrap();
         let application = xml_find_by_tag(document, "application".into())[0];
         let parent = xml_create_element(document, "activity".into());
@@ -433,7 +435,8 @@ mod tests {
             let mut ctx = PatchContext::new(&mut apk);
             ctx.inject_file(0, "res/layout/main.xml", br#"<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"><TextView android:text="original"/></LinearLayout>"#.to_vec(), Compression::Deflated).unwrap();
             let _run = RunGuard::enter().unwrap();
-            let guard = ContextGuard::enter(&mut ctx, dir.path().to_owned()).unwrap();
+            let guard =
+                ContextGuard::enter(&mut ctx, RunningBundle::at(dir.path().to_owned())).unwrap();
             let outer = xml_open(None, "res/layout/main.xml".into()).unwrap();
             let nested = xml_open(None, "res/layout/main.xml".into()).unwrap();
             let label = xml_find_by_tag(outer, "TextView".into())[0];

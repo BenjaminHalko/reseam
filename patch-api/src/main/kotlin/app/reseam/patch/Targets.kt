@@ -240,6 +240,29 @@ fun ClassTarget.field(name: String): FieldTarget {
     }
 }
 
+/**
+ * The constant of this enum whose `name()` is [name]. Obfuscation renames the constant's field but
+ * keeps the name it passes to the enum's constructor, so the target finds the field that holds the
+ * instance constructed with [name].
+ *
+ * ```kotlin
+ * private val premium = planEnum.enumConstant("PREMIUM")
+ *
+ * planGetter.replace { returnValue(staticField(premium)) }
+ * ```
+ */
+fun ClassTarget.enumConstant(name: String): FieldTarget {
+    val owner = this
+    val label = "${owner.label}.$name"
+    return FieldTarget(label) { runtime ->
+        val classDef = runtime.resolve(owner).value
+        val ref =
+            runtime.index.enumConstants(classDef)[name]
+                ?: error("${classDef.descriptor} has no enum constant named $name")
+        Resolution(ref, wrapped(label, "${ref.definingClass}.${ref.name}:${ref.fieldType}"))
+    }
+}
+
 /** The one instance field of this class with `type`. */
 fun ClassTarget.fieldOfType(type: String): FieldTarget {
     val owner = this

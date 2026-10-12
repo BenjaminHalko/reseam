@@ -63,6 +63,17 @@ val adLoader = klass("adLoader") {
 
 `klass("full.Name")` looks a class up by name; that works for classes the app doesn't obfuscate. `klass("label") { }` searches by description, like `method`. A class target narrows `method`, `methods`, `field`, and `fieldOfType` to that class. Add `inherited = true` to include methods the class inherits.
 
+Obfuscation renames an enum's fields but not the names its constants report, so find enums by those names:
+
+```kotlin
+val plan = klass("plan") { enumConstants("FREE", "PREMIUM") }
+val premium = plan.enumConstant("PREMIUM")
+
+planGetter.replace { returnValue(staticField(premium)) }
+```
+
+`enumConstants(...)` finds the enum that has these constants. `enumConstant(name)` is the field holding the constant whose `name()` is `name`.
+
 ## Your own code is left out
 
 Searches only cover the app's own code, not the Java your bundle adds to it (see [Shipping your own code](11_extensions.md)). Otherwise a match would depend on which patches ran before. Add `includeExtensions()` to search it too.

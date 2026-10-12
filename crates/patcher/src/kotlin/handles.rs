@@ -34,7 +34,27 @@ thread_local! {
     static CHANGES: RefCell<VecDeque<MethodChange>> = const { RefCell::new(VecDeque::new()) };
     static STRUCTURAL_REVISION: Cell<u64> = const { Cell::new(0) };
     static POOL_COPIES: RefCell<FxHashMap<PoolCopy, u32>> = RefCell::new(FxHashMap::default());
-    static BUNDLE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static BUNDLE: RefCell<Option<RunningBundle>> = const { RefCell::new(None) };
+}
+
+/// The bundle whose patch is running: who it is and where its files are.
+pub(crate) struct RunningBundle {
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) license: String,
+    pub(crate) directory: PathBuf,
+}
+
+#[cfg(test)]
+impl RunningBundle {
+    pub(crate) fn at(directory: PathBuf) -> Self {
+        Self {
+            name: "test".into(),
+            version: String::new(),
+            license: String::new(),
+            directory,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -231,7 +251,7 @@ pub fn mutation_revision() -> u64 {
 }
 
 impl<'ctx, 'apk> ContextGuard<'ctx, 'apk> {
-    pub fn enter(ctx: &'ctx mut PatchContext<'apk>, bundle_dir: PathBuf) -> PatcherResult<Self> {
+    pub fn enter(ctx: &'ctx mut PatchContext<'apk>, bundle: RunningBundle) -> PatcherResult<Self> {
         CTX_PTR.with(|cell| {
             if !cell.get().is_null() {
                 return Err(PatcherError::Bridge("nested patch context".into()));
@@ -239,7 +259,7 @@ impl<'ctx, 'apk> ContextGuard<'ctx, 'apk> {
             cell.set(std::ptr::from_mut(ctx).cast());
             Ok(())
         })?;
-        BUNDLE_DIR.with(|dir| *dir.borrow_mut() = Some(bundle_dir));
+        BUNDLE.with(|running| *running.borrow_mut() = Some(bundle));
         FAILURE.with(|failure| *failure.borrow_mut() = None);
         Ok(Self {
             _context: std::marker::PhantomData,
@@ -264,7 +284,7 @@ impl<'ctx, 'apk> ContextGuard<'ctx, 'apk> {
 impl Drop for ContextGuard<'_, '_> {
     fn drop(&mut self) {
         CTX_PTR.with(|cell| cell.set(std::ptr::null_mut()));
-        BUNDLE_DIR.with(|dir| *dir.borrow_mut() = None);
+        BUNDLE.with(|running| *running.borrow_mut() = None);
         xml::reset();
     }
 }
@@ -299,9 +319,19 @@ pub(super) fn try_with_ctx<R>(f: impl FnOnce(&mut PatchContext<'_>) -> R) -> Pat
 }
 
 pub(super) fn bundle_path(relative: &str) -> PathBuf {
-    BUNDLE_DIR.with(|dir| match dir.borrow().as_ref() {
-        Some(dir) => dir.join(relative),
+    BUNDLE.with(|running| match running.borrow().as_ref() {
+        Some(bundle) => bundle.directory.join(relative),
         None => PathBuf::from(relative),
+    })
+}
+
+pub(super) fn with_running_bundle<R>(f: impl FnOnce(&RunningBundle) -> R) -> Result<R, String> {
+    BUNDLE.with(|running| {
+        running
+            .borrow()
+            .as_ref()
+            .map(f)
+            .ok_or_else(|| "no patch is running on this thread".to_owned())
     })
 }
 

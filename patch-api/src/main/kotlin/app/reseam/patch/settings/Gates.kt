@@ -16,14 +16,14 @@ import app.reseam.patch.skipWhen
 import app.reseam.patch.types.HermesArgument
 import app.reseam.patch.types.HermesExportRef
 
-/** Runs `block` in the app when the toggle is on. */
+/** Runs `block` in the app when the running bundle's toggle is on. */
 fun CodeScope.whenEnabled(setting: ToggleSetting, block: CodeScope.() -> Unit): Otherwise =
-    whenTrue(call(ReseamSettings.getBoolean, string(setting.key), bool(setting.default)), block)
+    whenTrue(valueOf(setting), block)
 
 /**
- * Applies the hooks written in [block] only while [setting] is on. Hermes hooks read it once per
- * process through the `settings-js` extension, which the patch bundle provides along with the
- * `ReseamSettings` React Native module its settings host registers.
+ * Applies the hooks written in [block] only while the running bundle's [setting] is on. Hermes
+ * hooks read it once per process through the app runtime, which needs the app's settings host to
+ * add [ReseamReactPackage] to the app's React Native packages.
  *
  * ```kotlin
  * gate(AppSettings.hideAds) {
@@ -45,9 +45,7 @@ class GateScope internal constructor(val setting: ToggleSetting) {
     fun PointTarget.after(block: CodeScope.() -> Unit) = afterOn(setting, block)
 
     /** Skips the call at the point; the call's result must be unused. */
-    fun PointTarget.skip() = skipWhen {
-        call(ReseamSettings.getBoolean, string(setting.key), bool(setting.default))
-    }
+    fun PointTarget.skip() = skipWhen { valueOf(setting) }
 
     fun MethodTarget.alwaysReturn() = returnOn(setting, Type.Void) { returnVoid() }
 
@@ -72,13 +70,13 @@ class GateScope internal constructor(val setting: ToggleSetting) {
 
     fun FunctionTarget.wrap(export: JsExport) =
         wrapBound(
-            ReseamJsSettings.wrapWhen,
-            bound() + HermesArgument.Export(HermesExportRef(export.module.name, export.name)),
+            AppRuntimeJs.wrapWhen,
+            bound() + HermesArgument.Export(HermesExportRef(export.module.source, export.name)),
         )
 
-    fun FunctionTarget.alwaysReturn() = wrapBound(ReseamJsSettings.skipWhen, bound())
+    fun FunctionTarget.alwaysReturn() = wrapBound(AppRuntimeJs.skipWhen, bound())
 
-    fun FunctionTarget.alwaysReturnNull() = wrapBound(ReseamJsSettings.returnNullWhen, bound())
+    fun FunctionTarget.alwaysReturnNull() = wrapBound(AppRuntimeJs.returnNullWhen, bound())
 
     fun FunctionTarget.alwaysReturn(value: Boolean) = returnValue(HermesArgument.Bool(value))
 
@@ -97,7 +95,7 @@ class GateScope internal constructor(val setting: ToggleSetting) {
             "setArgument needs property names separated by dots, got '$path'"
         }
         wrapBound(
-            ReseamJsSettings.setArgumentWhen,
+            AppRuntimeJs.setArgumentWhen,
             bound() +
                 listOf(
                     HermesArgument.Int(index),
@@ -108,10 +106,14 @@ class GateScope internal constructor(val setting: ToggleSetting) {
     }
 
     private fun FunctionTarget.returnValue(value: HermesArgument) =
-        wrapBound(ReseamJsSettings.returnWhen, bound() + value)
+        wrapBound(AppRuntimeJs.returnWhen, bound() + value)
 
     private fun bound() =
-        listOf(HermesArgument.Text(setting.key), HermesArgument.Bool(setting.default))
+        listOf(
+            HermesArgument.Text(bundle.name),
+            HermesArgument.Text(setting.key),
+            HermesArgument.Bool(setting.default),
+        )
 }
 
 private fun MethodTarget.beforeOn(setting: ToggleSetting, block: CodeScope.() -> Unit) = before {

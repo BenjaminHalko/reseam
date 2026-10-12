@@ -4,11 +4,13 @@
 package app.reseam.patch
 
 import app.reseam.patch.native.checkInvocation
+import app.reseam.patch.native.runningBundle
 import app.reseam.patch.settings.SettingsHost
 import app.reseam.patch.settings.SettingsSection
 import app.reseam.patch.types.ClassInfo
 import app.reseam.patch.types.Instruction
 import app.reseam.patch.types.MethodInfo
+import app.reseam.patch.types.RunningBundleInfo
 import java.util.IdentityHashMap
 
 /**
@@ -30,6 +32,9 @@ class PatchRuntime() {
     val files: FileScope = FileScope()
     val options: RuntimeOptions = RuntimeOptions()
     val log: PatchLogger = PatchLogger()
+
+    /** The bundle whose patch is running. */
+    internal val bundle: RunningBundleInfo by lazy { runningBundle() }
 
     private val resolutions = IdentityHashMap<Target<*>, Resolution<*>>()
     private val resolving = IdentityHashMap<Target<*>, Unit>()
@@ -96,6 +101,7 @@ internal class PatchRun {
     val cache = RunCache()
     private val settings =
         IdentityHashMap<SettingsHost, MutableList<Pair<ReseamPatch, List<SettingsSection>>>>()
+    private val settingsOwners = mutableMapOf<String, SettingsHost>()
 
     fun register(host: SettingsHost, patch: ReseamPatch, sections: List<SettingsSection>) {
         val registered = settings.getOrPut(host) { mutableListOf() }
@@ -108,6 +114,14 @@ internal class PatchRun {
 
     fun clear(host: SettingsHost) {
         settings.remove(host)
+    }
+
+    /** Records that [host] writes [bundle]'s settings, which one host per app may do. */
+    fun claimSettings(bundle: String, host: SettingsHost) {
+        val owner = settingsOwners.putIfAbsent(bundle, host)
+        require(owner == null || owner === host) {
+            "$bundle has two settings hosts for this app: $owner and $host"
+        }
     }
 }
 

@@ -39,3 +39,5 @@ project(":sdk-kotlin").name = "reseam-sdk"
 project(":gradle-plugin").name = "reseam-gradle-plugin"
 
 project(":browser").name = "reseam-browser-host"
+
+includeBuild("app-runtime")

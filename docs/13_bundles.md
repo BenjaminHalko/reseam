@@ -28,11 +28,12 @@ Each app's patches compile to one `<app>-patches.jar`, and a shared `patch/` fol
 name = "my-patches"
 author = "Your Name"
 description = "Patches for Example"
+license = "GPL-3.0"
 format_version = 1
 ```
 
 - `name`: lowercase letters, digits, and hyphens. It names the output file and prefixes your patch references (`my-patches/<id>`).
-- `author` and `description` are shown to users.
+- `author`, `description`, and `license` are shown to users. `license` is optional.
 - `format_version` is `1`.
 
 ## `settings.gradle.kts`

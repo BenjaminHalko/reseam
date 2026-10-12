@@ -22,7 +22,13 @@ pub(super) struct HermesSession {
     image: HermesImage,
     index: FunctionIndex,
     edits: Option<Edits>,
-    modules: BTreeMap<PathBuf, ModuleId>,
+    modules: BTreeMap<ModuleSource, ModuleId>,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ModuleSource {
+    AppRuntime,
+    File(PathBuf),
 }
 
 impl HermesSession {
@@ -73,19 +79,46 @@ impl PatchContext<'_> {
             .find_function(&session.image.file(), name, strings, parameters)?)
     }
 
+    /// Links a bundle's JavaScript extension compiled to Hermes bytecode.
     pub(crate) fn hermes_link(&mut self, module: &Path) -> Result<ModuleId> {
+        self.hermes_link_source(ModuleSource::File(module.to_owned()), |_| {
+            let file = std::fs::File::open(module).map_err(|e| {
+                PatcherError::Bundle(format!("Hermes extension {}: {e}", module.display()))
+            })?;
+            // SAFETY: bundle payloads are validated immutable snapshots retained for the run.
+            Ok(Bytes::from_mmap(Arc::new(unsafe {
+                reseam_storage::map_file(&file)?
+            })))
+        })
+    }
+
+    /// Links the app runtime's JavaScript, compiled for the app's bytecode version.
+    #[cfg(feature = "bridge")]
+    pub(crate) fn hermes_link_app_runtime(&mut self) -> Result<ModuleId> {
+        self.hermes_link_source(ModuleSource::AppRuntime, |version| {
+            crate::app_runtime::hermes(version)
+                .map(Bytes::from_slice)
+                .ok_or_else(|| {
+                    PatcherError::NotFound(format!(
+                        "the app runtime's JavaScript for Hermes bytecode version {version}"
+                    ))
+                })
+        })
+    }
+
+    fn hermes_link_source(
+        &mut self,
+        source: ModuleSource,
+        bytes: impl FnOnce(u32) -> Result<Bytes>,
+    ) -> Result<ModuleId> {
         let session = self.hermes_session()?;
-        if let Some(&id) = session.modules.get(module) {
+        if let Some(&id) = session.modules.get(&source) {
             return Ok(id);
         }
-        let file = std::fs::File::open(module).map_err(|e| {
-            PatcherError::Bundle(format!("Hermes extension {}: {e}", module.display()))
-        })?;
-        // SAFETY: bundle payloads are validated immutable snapshots retained for the run.
-        let source = unsafe { reseam_storage::map_file(&file)? };
-        let module_file = HermesFile::parse(&source)?;
+        let module = bytes(session.image.file().version())?;
+        let module_file = HermesFile::parse(&module)?;
         let id = session.edit(|editor| Ok(editor.link(&module_file)?))?;
-        session.modules.insert(module.to_owned(), id);
+        session.modules.insert(source, id);
         Ok(id)
     }
 

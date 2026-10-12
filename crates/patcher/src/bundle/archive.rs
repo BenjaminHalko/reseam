@@ -144,7 +144,7 @@ impl BundleArchive {
 
         #[cfg(feature = "bridge")]
         let patches =
-            crate::kotlin::load_patches(&jars, Arc::clone(&extracted), &self.manifest.bundle.name)?;
+            crate::kotlin::load_patches(&jars, Arc::clone(&extracted), &self.manifest.bundle)?;
         #[cfg(not(feature = "bridge"))]
         let patches = Vec::new();
 

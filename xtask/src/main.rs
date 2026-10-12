@@ -28,7 +28,8 @@ enum Cmd {
         #[arg(value_enum)]
         target: RegenTarget,
     },
-    /// Builds the patch API and Kotlin runtime jar embedded in desktop engine builds.
+    /// Builds the patch API and Kotlin runtime jar embedded in desktop engine builds, and the app
+    /// runtime every engine build embeds.
     Runtime,
     /// Packages SDK Android and desktop JNI libraries after building the runtime jar.
     PackSdk,
@@ -61,7 +62,7 @@ fn main() -> Result<()> {
                 sdk::regen()?;
             }
         }
-        Cmd::Runtime => run::gradle(&[":reseam-sdk:patchRuntimeJar"])?,
+        Cmd::Runtime => run::gradle(&[":reseam-sdk:patchRuntimeJar", ":app-runtime:stage"])?,
         Cmd::PackSdk => {
             boltffi::check_version()?;
             sdk::pack()?;

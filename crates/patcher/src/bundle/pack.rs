@@ -24,7 +24,11 @@ use crate::error::Result;
 /// so the same bundle runs on the desktop JVM and on ART.
 /// Initializes the author's patch declarations to include their static metadata
 /// in the signed manifest. Packing therefore requires trusted source code.
-pub fn pack(dir: &Path, signing_key: &SigningKey, out: &Path) -> Result<()> {
+/// `version` names the release; development builds pass `None`.
+pub fn pack(dir: &Path, version: Option<&str>, signing_key: &SigningKey, out: &Path) -> Result<()> {
+    if version.is_some_and(|version| version.trim().is_empty()) {
+        return Err(bundle_error("bundle version must not be empty"));
+    }
     let manifest = read_manifest(&dir.join("manifest.toml"))?;
     let paths = payload_paths(dir)?;
     let mut payload = BTreeMap::new();
@@ -50,8 +54,13 @@ pub fn pack(dir: &Path, signing_key: &SigningKey, out: &Path) -> Result<()> {
         .filter(|(name, _)| Path::new(name).extension().is_some_and(|ext| ext == "jar"))
         .map(|(_, (path, _))| path.clone())
         .collect();
+    let bundle = BundleInfo {
+        version: version.unwrap_or_default().to_owned(),
+        engine: ENGINE_VERSION.to_string(),
+        ..manifest.bundle
+    };
     #[cfg(feature = "kotlin")]
-    let patches = crate::kotlin::load_patches(&jars, Arc::clone(&snapshot), &manifest.bundle.name)?
+    let patches = crate::kotlin::load_patches(&jars, Arc::clone(&snapshot), &bundle)?
         .iter()
         .map(|patch| patch.spec().clone())
         .collect();
@@ -63,10 +72,7 @@ pub fn pack(dir: &Path, signing_key: &SigningKey, out: &Path) -> Result<()> {
         Vec::new()
     };
     let manifest = BundleManifest {
-        bundle: BundleInfo {
-            engine: ENGINE_VERSION.to_string(),
-            ..manifest.bundle
-        },
+        bundle,
         files: payload
             .iter()
             .map(|(name, (_, hash))| (name.clone(), hex::encode(hash)))

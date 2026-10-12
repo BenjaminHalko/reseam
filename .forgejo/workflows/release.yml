@@ -182,7 +182,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           FORGEJO_PACKAGES_TOKEN: ${{ secrets.FORGEJO_PACKAGES_TOKEN }}
-        run: ./gradlew publishAllPublicationsToForgejoRepository -PreseamSdkVersion=${{ github.ref_name }} --no-daemon -Dorg.gradle.jvmargs=-Xmx1536m
+        run: ./gradlew publishAllPublicationsToForgejoRepository :app-runtime:reseam-app-runtime:publishAllPublicationsToForgejoRepository -PreseamSdkVersion=${{ github.ref_name }} --no-daemon -Dorg.gradle.jvmargs=-Xmx1536m
 
       - name: Publish the browser package to the Forgejo npm registry
         if: startsWith(github.ref, 'refs/tags/')

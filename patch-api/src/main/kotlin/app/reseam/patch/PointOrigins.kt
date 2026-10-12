@@ -49,6 +49,10 @@ internal class ArgumentOrigins(private val method: Method) {
         return origins
     }
 
+    /** Where the value in [register] at instruction [at] was written. */
+    fun register(insns: List<Instruction>, at: Int, register: Int): Origins =
+        trace(insns, at, register, null, mutableSetOf())
+
     /** Resolves a staged argument to the register holding its value before the anchored block. */
     fun atEntry(
         insns: List<Instruction>,

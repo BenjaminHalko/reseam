@@ -11,17 +11,15 @@ Writes the index file that tells Reseam Manager where your releases are. It only
 
 ```bash
 reseam publish patches my-patches.reseam \
-  --version 1.2.0 \
   --url https://example.com/my-patches-1.2.0.reseam
 ```
 
-Adds the release to `patches.json`, or creates the file. The bundle's name, author, public key, and patch list are read from the signed bundle. A release with the same version is replaced, and the newest release goes first. Only the newest release and the newest prerelease keep their patch lists; older releases keep their version, notes, and link.
+Adds the release to `patches.json`, or creates the file. The bundle's name, author, public key, version, and patch list are read from the signed bundle, so the bundle must be packed with `--version`. A release with the same version is replaced, and the newest release goes first. Only the newest release and the newest prerelease keep their patch lists; older releases keep their version, notes, and link.
 
 It refuses to change the public key recorded in an existing index, so a bundle signed with a different key can't take over your index by mistake.
 
 | Flag | |
 |---|---|
-| `--version <version>` | the release version; required |
 | `--url <url>` | where the bundle can be downloaded; required |
 | `--out <path>` | the index file (default `patches.json`) |
 | `--description <text>`, `--description-file <path>` | release notes |
@@ -38,4 +36,4 @@ reseam publish manager --name "Reseam Manager" --author Reseam \
   --version 1.0.0 --url https://example.com/manager/v1.0.0
 ```
 
-Writes `manager.json`, the index of Reseam Manager releases. It takes the same release flags, plus `--name`, `--author`, and an optional `--summary`. The default output is `manager.json`.
+Writes `manager.json`, the index of Reseam Manager releases. It takes the same release flags, plus `--name`, `--author`, `--version`, and an optional `--summary`. The default output is `manager.json`.

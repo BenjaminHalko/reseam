@@ -11,6 +11,7 @@ import app.reseam.patch.dex.descriptor
 internal class ClassQuerySpec : QuerySpec<DexClass, ClassRankScope>("class"), ClassQuery {
     private val stringValues = mutableListOf<String>()
     private val instanceFieldTypes = mutableListOf<String>()
+    private val enumNames = mutableListOf<String>()
     private val superTypes = mutableListOf<String>()
     private val interfaceTypes = mutableListOf<String>()
     private val sourceFiles = mutableListOf<String>()
@@ -22,6 +23,10 @@ internal class ClassQuerySpec : QuerySpec<DexClass, ClassRankScope>("class"), Cl
 
     override fun hasInstanceField(type: String) {
         instanceFieldTypes += descriptor(type)
+    }
+
+    override fun enumConstants(vararg names: String) {
+        enumNames += names
     }
 
     override fun extends(type: String) {
@@ -46,6 +51,11 @@ internal class ClassQuerySpec : QuerySpec<DexClass, ClassRankScope>("class"), Cl
         stringValues.forEach {
             seeds +=
                 "strings(${quoted(it)})" to
+                    index.classesWithString(it).map(DexClass::handle).toSet()
+        }
+        enumNames.forEach {
+            seeds +=
+                "enumConstants(${quoted(it)})" to
                     index.classesWithString(it).map(DexClass::handle).toSet()
         }
         sourceFiles.forEach {
@@ -86,6 +96,8 @@ internal class ClassQuerySpec : QuerySpec<DexClass, ClassRankScope>("class"), Cl
         if (isHiddenExtension(value.info.dexIndex.toInt(), index))
             return "defined by a bundle extension"
         if (stringValues.any { !index.classHasString(value, it) }) return "missing required string"
+        if (enumNames.isNotEmpty() && !index.enumConstants(value).keys.containsAll(enumNames))
+            return "missing enum constant"
         if (instanceFieldTypes.any { type -> value.instanceFields.none { it.fieldType == type } })
             return "missing instance field"
         if (superTypes.any { !index.classExtends(value, it) }) return "superclass mismatch"
@@ -97,6 +109,7 @@ internal class ClassQuerySpec : QuerySpec<DexClass, ClassRankScope>("class"), Cl
 
     override fun matchReasons(): List<String> = buildList {
         if (stringValues.isNotEmpty()) add("matched class strings ${stringValues.joinToString()}")
+        if (enumNames.isNotEmpty()) add("matched enum constants ${enumNames.joinToString()}")
         if (instanceFieldTypes.isNotEmpty())
             add("matched instance fields ${instanceFieldTypes.joinToString()}")
         if (superTypes.isNotEmpty()) add("matched superclass ${superTypes.joinToString()}")

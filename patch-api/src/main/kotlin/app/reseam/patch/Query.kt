@@ -87,6 +87,12 @@ interface ClassQuery {
 
     fun hasInstanceField(type: String)
 
+    /**
+     * The class is an enum with constants of these names, as `name()` returns them; matches when
+     * obfuscation renamed the constants' fields. Seeded from the string index.
+     */
+    fun enumConstants(vararg names: String)
+
     fun extends(type: String)
 
     fun implements(type: String)

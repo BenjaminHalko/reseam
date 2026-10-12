@@ -15,6 +15,7 @@ import app.reseam.patch.before
 import app.reseam.patch.dex.AccessFlags
 import app.reseam.patch.dex.Opcode
 import app.reseam.patch.dex.opcode
+import app.reseam.patch.enumConstant
 import app.reseam.patch.klass
 import app.reseam.patch.method
 import app.reseam.patch.methods
@@ -720,4 +721,17 @@ val constantForms =
                 returnValue(int(0))
             }
         }
+    }
+
+private val planEnum = klass("plan") { enumConstants("FREE", "PREMIUM") }
+
+val enumConstants =
+    fixturePatch("enum-constants") {
+        val premium = planEnum.enumConstant("PREMIUM")
+        klass("com.example.Account").method("plan").replace { returnValue(staticField(premium)) }
+        files.write(
+            "assets/enum-constants.txt",
+            "${planEnum.descriptor}|${premium.name}|${planEnum.enumConstant("FAMILY").name}"
+                .encodeToByteArray(),
+        )
     }

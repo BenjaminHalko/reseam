@@ -30,11 +30,17 @@ pub fn run_bundle_list(command: &BundleListCommand) -> Result<()> {
         anyhow::bail!("{problem}");
     }
     println!("bundle: {}", bundle.name);
+    if !bundle.version.is_empty() {
+        println!("version: {}", bundle.version);
+    }
     if !bundle.author.is_empty() {
         println!("author: {}", bundle.author);
     }
     if !bundle.description.is_empty() {
         println!("description: {}", bundle.description);
+    }
+    if !bundle.license.is_empty() {
+        println!("license: {}", bundle.license);
     }
     println!(
         "signer: {} ({})",
@@ -176,7 +182,12 @@ pub fn run_bundle_pack(command: &BundlePackCommand) -> Result<()> {
         "signing key must be exactly 32 bytes"
     );
     create_parent(&command.out)?;
-    reseam_patcher::bundle::pack(&command.dir, &SigningKey::from_bytes(&seed), &command.out)?;
+    reseam_patcher::bundle::pack(
+        &command.dir,
+        command.version.as_deref(),
+        &SigningKey::from_bytes(&seed),
+        &command.out,
+    )?;
     info!(out = %command.out.display(), "bundle packed and signed");
     Ok(())
 }

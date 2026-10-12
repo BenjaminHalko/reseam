@@ -65,7 +65,16 @@ internal class ReseamWorkspacePlugin : Plugin<Settings> {
             when (path) {
                 ":" -> pluginManager.apply(ReseamBundlePlugin::class.java)
                 in patches -> pluginManager.apply(ReseamPatchesPlugin::class.java)
-                in extensions -> pluginManager.apply(ReseamExtensionPlugin::class.java)
+                in extensions -> {
+                    pluginManager.apply(ReseamExtensionPlugin::class.java)
+                    // The engine links the app runtime; extensions only compile against it.
+                    plugins.withId("java-library") {
+                        dependencies.add(
+                            "compileOnly",
+                            "app.reseam:reseam-app-runtime:$reseamVersion",
+                        )
+                    }
+                }
             }
         }
     }

@@ -44,7 +44,13 @@ pub struct BundleInfo {
     pub author: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// The license the bundle is under, such as `GPL-3.0`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub license: String,
     pub format_version: u32,
+    /// The release this bundle is, set when it is packed. Development builds have none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub version: String,
     /// Engine version the bundle was packed with. Semver: bundles work with
     /// engines of the same major (same minor while the major is 0).
     #[serde(default, skip_serializing_if = "String::is_empty")]

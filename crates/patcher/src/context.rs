@@ -78,7 +78,7 @@ impl<'a> PatchContext<'a> {
             options: PatchOptions::default(),
             skeleton: None,
             method: None,
-            extensions: ExtensionSet::default(),
+            extensions: ExtensionSet::app_runtime(),
             hermes: None,
         }
     }

@@ -7,7 +7,8 @@ use std::sync::Arc;
 use reseam_storage::ScratchDir;
 use serde::{Deserialize, Serialize};
 
-use super::handles::ContextGuard;
+use super::handles::{ContextGuard, RunningBundle};
+use crate::bundle::BundleInfo;
 use crate::bundle::declarations::declarations;
 use crate::bundle::index::Declaration;
 use crate::error::{PatcherError, Result};
@@ -52,6 +53,9 @@ struct LoadedPatch {
 
 struct Loader {
     handle: u32,
+    name: String,
+    version: String,
+    license: String,
     directory: Arc<ScratchDir>,
 }
 
@@ -68,17 +72,20 @@ impl Drop for Loader {
 pub fn load_patches(
     jars: &[PathBuf],
     directory: Arc<ScratchDir>,
-    bundle: &str,
+    bundle: &BundleInfo,
 ) -> Result<Vec<Patch>> {
     let declarations = declarations(jars)?.into_values().flatten().collect();
     let loaded: Loaded = serde_json::from_slice(&call(&Request::Load {
         jars,
-        bundle,
+        bundle: &bundle.name,
         declarations,
     })?)
     .map_err(json_error)?;
     let loader = Arc::new(Loader {
         handle: loaded.handle,
+        name: bundle.name.clone(),
+        version: bundle.version.clone(),
+        license: bundle.license.clone(),
         directory,
     });
     Ok(loaded
@@ -88,7 +95,15 @@ pub fn load_patches(
             let loader = Arc::clone(&loader);
             let reference = spec.reference();
             Patch::new(spec, finalizes, move |phase, context| {
-                let guard = ContextGuard::enter(context, loader.directory.path().to_path_buf())?;
+                let guard = ContextGuard::enter(
+                    context,
+                    RunningBundle {
+                        name: loader.name.clone(),
+                        version: loader.version.clone(),
+                        license: loader.license.clone(),
+                        directory: loader.directory.path().to_path_buf(),
+                    },
+                )?;
                 let result = call(&Request::Invoke {
                     handle: loader.handle,
                     patch: &reference,

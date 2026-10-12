@@ -25,8 +25,8 @@ export type Problem =
   | { type: 'unknown_preset'; value: string }
   | { type: 'missing_package' | 'other' };
 export interface BundleMetadata {
-  file_name: string; name: string; author: string; description: string; files: string[];
-  public_key: string; engine: string; trusted: boolean; problem: Problem | null;
+  file_name: string; name: string; author: string; description: string; license: string; files: string[];
+  public_key: string; version: string; engine: string; trusted: boolean; problem: Problem | null;
 }
 export interface ApkMetadata {
   application_label: string | null; package_name: string | null; version_name: string | null; version_code: number | null;

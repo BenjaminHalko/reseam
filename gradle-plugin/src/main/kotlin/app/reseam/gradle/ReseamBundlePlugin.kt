@@ -28,6 +28,9 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                 .standardOutput
                 .asText
                 .map { bundleJson.decodeFromString<BundleMetadata>(it).name }
+        val env = { name: String -> project.providers.environmentVariable(name) }
+        val releaseTag = project.providers.gradleProperty("releaseTag")
+        val version = env("RESEAM_RELEASE_VERSION").orElse(releaseTag.map { it.removePrefix("v") })
         val stageDir = project.layout.buildDirectory.dir("reseam/stage")
         val bundleFile = project.layout.buildDirectory.file(bundleName.map { "reseam/$it.reseam" })
 
@@ -108,18 +111,21 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                 inputs.dir(stageDir)
                 inputs.file(reseamBin)
                 inputs.file(signingKey.map(project::file))
+                inputs.property("version", version.orElse(""))
                 outputs.file(bundleFile)
                 doFirst {
                     bundleFile.get().asFile.parentFile.mkdirs()
                     commandLine(
-                        reseamBin.get().absolutePath,
-                        "bundle",
-                        "pack",
-                        stageDir.get().asFile.absolutePath,
-                        "--key",
-                        signingKey.get(),
-                        "--out",
-                        bundleFile.get().asFile.absolutePath,
+                        listOf(
+                            reseamBin.get().absolutePath,
+                            "bundle",
+                            "pack",
+                            stageDir.get().asFile.absolutePath,
+                            "--key",
+                            signingKey.get(),
+                            "--out",
+                            bundleFile.get().asFile.absolutePath,
+                        ) + version.map { listOf("--version", it) }.getOrElse(emptyList())
                     )
                 }
             }
@@ -129,10 +135,6 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                 group = "distribution"
                 description = "Writes the patches.json release index for the bundle."
                 dependsOn(bundle)
-                val env = { name: String -> project.providers.environmentVariable(name) }
-                val releaseTag = project.providers.gradleProperty("releaseTag")
-                val version =
-                    env("RESEAM_RELEASE_VERSION").orElse(releaseTag.map { it.removePrefix("v") })
                 val url =
                     env("RESEAM_BUNDLE_URL")
                         .orElse(
@@ -158,7 +160,6 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                         .orElse(false)
                 inputs.file(bundleFile)
                 inputs.file(reseamBin)
-                inputs.property("version", version.orElse(""))
                 inputs.property("url", url.orElse(""))
                 inputs.property("homepage", homepage)
                 inputs.property("description", description)
@@ -168,17 +169,15 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                 outputs.upToDateWhen { false }
                 outputs.file(outFile)
                 doFirst {
+                    if (!version.isPresent) {
+                        throw GradleException("RESEAM_RELEASE_VERSION or -PreleaseTag is required")
+                    }
                     val args =
                         mutableListOf(
                             reseamBin.get().absolutePath,
                             "publish",
                             "patches",
                             bundleFile.get().asFile.absolutePath,
-                            "--version",
-                            version.orNull
-                                ?: throw GradleException(
-                                    "RESEAM_RELEASE_VERSION or -PreleaseTag is required"
-                                ),
                             "--url",
                             url.orNull
                                 ?: throw GradleException(

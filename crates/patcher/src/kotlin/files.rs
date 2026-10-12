@@ -201,14 +201,16 @@ pub(super) fn inject(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kotlin::handles::{ContextGuard, RunGuard};
+    use crate::kotlin::handles::{ContextGuard, RunGuard, RunningBundle};
 
     #[test]
     fn original_apk_ranges_are_bounded_and_report_invalid_requests() {
         let (directory, mut apk) = crate::test_support::apk();
         let mut context = PatchContext::new(&mut apk);
         let _run = RunGuard::enter().unwrap();
-        let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+        let guard =
+            ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned()))
+                .unwrap();
         let size = file_source_size(None).unwrap();
         assert_eq!(file_source_range(None, 0, 4).unwrap(), b"PK\x03\x04");
         for (offset, length) in [(size, 0), (size, 100), (size - 1, 0)] {

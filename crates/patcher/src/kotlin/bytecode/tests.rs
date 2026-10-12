@@ -5,7 +5,7 @@ use reseam_apk::reseam_dex::{AccessFlags, DexFile, DexHeader, DexVersion};
 
 use super::{assembly, class_ops, lookup, mutation, registers, search};
 use crate::context::PatchContext;
-use crate::kotlin::handles::{ContextGuard, RunGuard};
+use crate::kotlin::handles::{ContextGuard, RunGuard, RunningBundle};
 use crate::kotlin::types::{Instruction, NewMethod, SimpleInsn};
 
 fn fixture_method(name: String, proto: String, registers_size: u16, ins_size: u16) -> NewMethod {
@@ -53,7 +53,8 @@ fn previous_run_handles() -> ExampleHandles {
     apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V035)));
     let mut context = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     let handles = example_handles("Old");
     guard.finish().unwrap();
     handles
@@ -74,7 +75,9 @@ fn handles_from_finished_runs_cannot_alias_current_objects() {
         apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V035)));
         let mut context = PatchContext::new(&mut apk);
         let _run = RunGuard::enter().unwrap();
-        let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+        let guard =
+            ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned()))
+                .unwrap();
         let current = example_handles("New");
         assert!(lookup::get_class_info(previous.class).is_none());
         assert!(lookup::get_method_info(previous.method).is_none());
@@ -106,7 +109,7 @@ fn handles_survive_class_removal_and_callback_boundaries() {
     apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V035)));
     let mut ctx = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut ctx, dir.path().to_owned()).unwrap();
+    let guard = ContextGuard::enter(&mut ctx, RunningBundle::at(dir.path().to_owned())).unwrap();
     let classes: Vec<_> = ["LA;", "LB;", "LC;"]
         .into_iter()
         .map(|name| {
@@ -147,7 +150,7 @@ fn handles_survive_class_removal_and_callback_boundaries() {
         }
     }
     guard.finish().unwrap();
-    let guard = ContextGuard::enter(&mut ctx, dir.path().to_owned()).unwrap();
+    let guard = ContextGuard::enter(&mut ctx, RunningBundle::at(dir.path().to_owned())).unwrap();
     assert_eq!(
         lookup::get_class_info(classes[2].0).unwrap().descriptor,
         "LC;"
@@ -168,7 +171,8 @@ fn pool_operands_survive_copying_between_dex_files() {
     apk.add_dex(other);
     let mut context = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     let inputs = crate::test_support::pool_operands();
     let methods: Vec<_> = [(0, "LSource;"), (1, "LDestination;")]
         .into_iter()
@@ -196,7 +200,8 @@ fn pool_operands_survive_copying_between_dex_files() {
     guard.finish().unwrap();
     let source = crate::kotlin::handles::method_location(methods[0]).unwrap();
     crate::test_support::duplicate_call_site(&mut context, source);
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     mutation::set_instructions(methods[1], search::get_instructions(methods[0])).unwrap();
     for &method in &methods {
         let instructions = search::get_instructions(method);
@@ -248,7 +253,8 @@ fn authored_raw_pool_references_survive_pure_lowering_and_insertion() {
     apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V039)));
     let mut context = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     let handles = example_handles("RawReferences");
     registers::grow_local_registers(handles.method, 1, vec![]).unwrap();
     let references = [
@@ -266,7 +272,9 @@ fn authored_raw_pool_references_survive_pure_lowering_and_insertion() {
         let index = u16::try_from(index).unwrap().to_le_bytes();
         let raw = Instruction::Raw(vec![opcode, 0, index[0], index[1]]);
         let lowered = assembly::lower_instructions(vec![raw], vec![]).unwrap();
-        let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+        let guard =
+            ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned()))
+                .unwrap();
         mutation::insert_instructions(handles.method, 0, lowered).unwrap();
         match reference {
             Reference::String => assert_eq!(
@@ -304,7 +312,9 @@ fn payload_references_survive_alignment_during_pure_lowering() {
         apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V039)));
         let mut context = PatchContext::new(&mut apk);
         let _run = RunGuard::enter().unwrap();
-        let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+        let guard =
+            ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned()))
+                .unwrap();
         let class = class_ops::create_class(
             0,
             "LPayloads;".into(),
@@ -430,7 +440,9 @@ fn bridge_queries_distinguish_absence_from_invalid_requests() {
         apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V035)));
         let mut context = PatchContext::new(&mut apk);
         let _run = RunGuard::enter().unwrap();
-        let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+        let guard =
+            ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned()))
+                .unwrap();
         request(&example_handles("Required"));
         assert_eq!(guard.finish().is_ok(), optional_absence);
     }
@@ -443,7 +455,8 @@ fn invalid_instruction_operands_fail_the_callback() {
     apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V039)));
     let mut context = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     let class = class_ops::create_class(
         0,
         "LSubject;".into(),
@@ -477,11 +490,14 @@ fn invalid_instruction_operands_fail_the_callback() {
         Instruction::Raw(vec![0]),
         Instruction::Raw(vec![0, 0, 0x0e, 0]),
     ] {
-        let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+        let guard =
+            ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned()))
+                .unwrap();
         assert!(mutation::set_instructions(method, vec![instruction]).is_err());
         assert!(guard.finish().is_err());
     }
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     search::get_instruction(method, 1000);
     assert!(guard.finish().is_err());
 }
@@ -495,7 +511,8 @@ fn edits_preserve_instruction_identity_through_nonlocal_expansion() {
     apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V035)));
     let mut context = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     let class = class_ops::create_class(
         0,
         "LRelocation;".into(),
@@ -546,7 +563,8 @@ fn assembling_blocks_keeps_branches_over_lowered_invocations() {
     apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V039)));
     let mut context = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     let class = class_ops::create_class(
         0,
         "LAssembly;".into(),
@@ -624,7 +642,8 @@ fn flag_changes_keep_member_groups_frames_and_handles_consistent() {
     apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V039)));
     let mut context = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     let class = class_ops::create_class(
         0,
         "LFlags;".into(),
@@ -688,7 +707,8 @@ fn field_storage_changes_preserve_unrelated_initial_values() {
     apk.add_dex(DexFile::new(DexHeader::new(DexVersion::V039)));
     let mut context = PatchContext::new(&mut apk);
     let _run = RunGuard::enter().unwrap();
-    let guard = ContextGuard::enter(&mut context, directory.path().to_owned()).unwrap();
+    let guard =
+        ContextGuard::enter(&mut context, RunningBundle::at(directory.path().to_owned())).unwrap();
     let class = class_ops::create_class(
         0,
         "LFields;".into(),

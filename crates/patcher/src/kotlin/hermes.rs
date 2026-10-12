@@ -101,37 +101,55 @@ pub enum HermesArgument {
     Export(HermesExportRef),
 }
 
-/// A callable export of a Hermes extension module.
+/// A JavaScript module compiled to Hermes bytecode.
+#[data]
+#[derive(Debug, Clone)]
+pub enum HermesModule {
+    /// The app runtime's module, which the engine provides.
+    AppRuntime,
+    /// A JavaScript extension in the running patch's bundle.
+    Bundle { name: String },
+}
+
+/// A callable export of a Hermes module.
 #[data]
 #[derive(Debug, Clone)]
 pub struct HermesExportRef {
-    pub module: String,
+    pub module: HermesModule,
     pub name: String,
 }
 
 #[export]
 pub fn hermes_wrap(
     handle: u32,
-    module: String,
+    module: HermesModule,
     export: String,
     bound: Vec<HermesArgument>,
 ) -> Result<(), String> {
     let function = function(handle)?;
     with_ctx_result(|ctx| {
-        let mut link = |name: &str| -> Result<ModuleId, String> {
-            if name.is_empty()
-                || !name
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-            {
-                return Err(
-                    "Hermes module names contain only letters, digits, hyphens and underscores"
-                        .into(),
-                );
-            }
-            let version = ctx.hermes_version().map_err(|e| e.to_string())?;
-            let path = bundle_path(&format!("resources/hermes/v{version}/{name}.hbc"));
-            ctx.hermes_link(&path).map_err(|e| e.to_string())
+        let mut link = |module: &HermesModule| -> Result<ModuleId, String> {
+            let linked = match module {
+                HermesModule::AppRuntime => ctx.hermes_link_app_runtime(),
+                HermesModule::Bundle { name } => {
+                    if name.is_empty()
+                        || !name
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+                    {
+                        return Err(
+                            "Hermes module names contain only letters, digits, hyphens and \
+                             underscores"
+                                .into(),
+                        );
+                    }
+                    let version = ctx.hermes_version().map_err(|e| e.to_string())?;
+                    ctx.hermes_link(&bundle_path(&format!(
+                        "resources/hermes/v{version}/{name}.hbc"
+                    )))
+                }
+            };
+            linked.map_err(|e| e.to_string())
         };
         let module = link(&module)?;
         let bound = bound

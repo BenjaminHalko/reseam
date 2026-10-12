@@ -25,13 +25,15 @@ A module only needs a `build.gradle.kts` to declare dependencies:
 
 ```kotlin
 dependencies {
-    compileOnly(project(":shared:settings-runtime"))
+    compileOnly(project(":shared:player-stubs"))
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
 }
 ```
 
 - `implementation`: shipped inside your extension. Android libraries (`.aar`) work too, but only their classes are used, and libraries with native code are refused.
 - `compileOnly`: expected to be there already, in the app or in another module of your bundle. Use it for libraries the app already contains, including Android libraries with native code.
+
+Every extension also compiles against the [app runtime](5_settings.md#the-app-runtime), the engine's settings store and branded components in `app.reseam.runtime`. The engine links it into the app, so extensions never ship it, and a bundle that defines a class in that package fails to load.
 
 ## Call it
 

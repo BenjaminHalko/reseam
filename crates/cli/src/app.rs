@@ -118,6 +118,9 @@ pub struct BundleKeygenCommand {
 #[derive(Args)]
 pub struct BundlePackCommand {
     pub dir: PathBuf,
+    /// The release this bundle is; omit it for development builds.
+    #[arg(long)]
+    pub version: Option<String>,
     #[arg(long)]
     pub key: PathBuf,
     #[arg(long)]
@@ -145,8 +148,6 @@ pub enum PublishCommands {
 
 #[derive(Args)]
 pub struct ReleaseArgs {
-    #[arg(long)]
-    pub version: String,
     #[arg(long)]
     pub url: String,
     #[arg(long, conflicts_with = "description_file")]
@@ -178,6 +179,8 @@ pub struct PublishManagerCommand {
     pub author: String,
     #[arg(long, default_value = "")]
     pub summary: String,
+    #[arg(long)]
+    pub version: String,
     #[command(flatten)]
     pub release: ReleaseArgs,
     #[arg(long, default_value = "manager.json")]

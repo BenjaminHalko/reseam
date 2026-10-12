@@ -30,7 +30,7 @@ impl KotlinCallback {
             PatchPhase::Execute => "invokeExecute",
             PatchPhase::Finalize => "invokeAfterDependents",
         };
-        let guard = ContextGuard::enter(ctx, self.loader.directory().to_path_buf())?;
+        let guard = ContextGuard::enter(ctx, self.loader.running())?;
         let outcome = jvm::get_or_init()?.attach_current_thread(|env| {
             jvm::with_frame(env, |env| {
                 call_with_runtime(env, self.object.as_ref(), self.loader.reference(), method)

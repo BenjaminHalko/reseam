@@ -29,6 +29,7 @@ import app.reseam.patch.native.findMethodsByStrings
 import app.reseam.patch.native.getAllClasses
 import app.reseam.patch.native.isAddedDex
 import app.reseam.patch.native.methodReferences
+import app.reseam.patch.types.FieldRef
 import app.reseam.patch.types.InstructionHit
 import app.reseam.patch.types.MethodRef
 
@@ -89,6 +90,7 @@ internal class SearchIndex(private val cache: RunCache) {
     private val seeds = HashMap<Seed, Set<UInt>>()
     private val classesByString = HashMap<String, Set<DexClass>>()
     private val classesByField = HashMap<String, Set<DexClass>>()
+    private val enumsByClass = HashMap<UInt, Map<String, FieldRef>>()
     private val refsByMethod = HashMap<UInt, List<MethodRef>>()
     private val invokeSites = HashMap<MethodSignature, List<Pair<UInt, Int>>>()
     private val castCounts = HashMap<CastQuery, Int>()
@@ -105,6 +107,7 @@ internal class SearchIndex(private val cache: RunCache) {
         seeds.clear()
         classesByString.clear()
         classesByField.clear()
+        enumsByClass.clear()
         refsByMethod.clear()
         invokeSites.clear()
         castCounts.clear()
@@ -122,6 +125,7 @@ internal class SearchIndex(private val cache: RunCache) {
                 it is Seed.Literal
         }
         classesByString.clear()
+        enumsByClass.clear()
         invokeSites.clear()
         castCounts.clear()
         matchingCalls.clear()
@@ -224,6 +228,10 @@ internal class SearchIndex(private val cache: RunCache) {
                 .mapNotNull(::classFor)
                 .toCollection(linkedSetOf())
         }
+
+    /** An enum's constants by the name each passes to its constructor; empty for other classes. */
+    fun enumConstants(classDef: DexClass): Map<String, FieldRef> =
+        cached(enumsByClass, classDef.handle) { readEnumConstants(classDef, this) }
 
     fun classesWithSourceFile(name: String): List<DexClass> = classesBySourceFile[name].orEmpty()
 

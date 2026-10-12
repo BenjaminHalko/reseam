@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::fmt;
+use std::path::PathBuf;
 
 use reseam_apk::reseam_dex::types::header::Loading;
 use reseam_apk::reseam_dex::write::write_class;
@@ -12,7 +13,13 @@ use tracing::debug;
 use super::PatchContext;
 use crate::error::{PatcherError, Result};
 
-#[derive(Default)]
+fn options() -> ParseOptions {
+    ParseOptions {
+        classes: Loading::Deferred,
+        ..ParseOptions::default()
+    }
+}
+
 pub struct ExtensionSet {
     files: Vec<ExtensionDex>,
     providers: HashMap<String, usize>,
@@ -20,36 +27,67 @@ pub struct ExtensionSet {
 }
 
 struct ExtensionDex {
-    path: PathBuf,
+    source: Source,
     file: Option<DexFile>,
 }
 
+enum Source {
+    AppRuntime,
+    Bundle(PathBuf),
+}
+
+impl fmt::Display for Source {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AppRuntime => f.write_str("the app runtime"),
+            Self::Bundle(path) => path.display().fmt(f),
+        }
+    }
+}
+
 impl ExtensionSet {
+    /// The app runtime the engine embeds, which every patch run can link.
+    pub fn app_runtime() -> Self {
+        #[cfg_attr(
+            not(feature = "bridge"),
+            expect(unused_mut, reason = "only the Kotlin bridge links the app runtime")
+        )]
+        let mut set = Self {
+            files: Vec::new(),
+            providers: HashMap::new(),
+            warned: HashSet::new(),
+        };
+        #[cfg(feature = "bridge")]
+        set.add(
+            Source::AppRuntime,
+            reseam_apk::reseam_dex::parse(crate::app_runtime::DEX, options()),
+        )
+        .expect("the build embeds the app runtime as valid DEX");
+        set
+    }
+
+    /// The app runtime, then the bundles' extension files.
     pub fn load(paths: &[PathBuf]) -> Result<Self> {
-        let mut set = Self::default();
+        let mut set = Self::app_runtime();
         for path in paths {
-            set.add(path)?;
+            set.add(Source::Bundle(path.clone()), parse_file(path, options()))?;
         }
         Ok(set)
     }
 
-    fn add(&mut self, path: &Path) -> Result<()> {
-        let options = ParseOptions {
-            classes: Loading::Deferred,
-            ..ParseOptions::default()
-        };
-        let mut dex = parse_file(path, options).map_err(|error| {
-            PatcherError::Bundle(format!(
-                "failed to parse extension DEX {}: {error}",
-                path.display()
-            ))
+    fn add(
+        &mut self,
+        source: Source,
+        parsed: reseam_apk::reseam_dex::Result<DexFile>,
+    ) -> Result<()> {
+        let mut dex = parsed.map_err(|error| {
+            PatcherError::Bundle(format!("failed to parse extension DEX {source}: {error}"))
         })?;
         let mut validation = dex.classes().clone();
         for index in (0..validation.len()).rev() {
-            drop(validation.remove(index, options).map_err(|error| {
+            drop(validation.remove(index, options()).map_err(|error| {
                 PatcherError::Bundle(format!(
-                    "invalid extension DEX {} class {index}: {error}",
-                    path.display()
+                    "invalid extension DEX {source} class {index}: {error}"
                 ))
             })?);
         }
@@ -57,18 +95,26 @@ impl ExtensionSet {
         let mut shared = Vec::new();
         for (class_idx, header) in dex.classes().headers().enumerate() {
             let descriptor = dex.type_descriptor(header.class_type).into_owned();
+            if matches!(source, Source::Bundle(_))
+                && descriptor.starts_with(crate::app_runtime::PACKAGE)
+            {
+                return Err(PatcherError::Bundle(format!(
+                    "{source} defines {descriptor}, a class of the app runtime the engine provides"
+                )));
+            }
             match self.providers.get(&descriptor) {
                 None => {
                     self.providers.insert(descriptor, index);
                 }
-                Some(&other) if self.defines_same(other, &descriptor, &dex, class_idx, path)? => {
+                Some(&other)
+                    if self.defines_same(other, &descriptor, &dex, class_idx, &source)? =>
+                {
                     shared.push(header.class_type);
                 }
                 Some(&other) => {
                     return Err(PatcherError::Bundle(format!(
-                        "class {descriptor} is defined differently by {} and {}",
-                        self.files[other].path.display(),
-                        path.display()
+                        "class {descriptor} is defined differently by {} and {source}",
+                        self.files[other].source
                     )));
                 }
             }
@@ -77,11 +123,11 @@ impl ExtensionSet {
         // java.lang.Record d8 synthesizes; one copy serves every extension that uses it.
         for class_type in shared {
             dex.remove_class(class_type).map_err(|error| {
-                PatcherError::Bundle(format!("extension DEX {}: {error}", path.display()))
+                PatcherError::Bundle(format!("extension DEX {source}: {error}"))
             })?;
         }
         self.files.push(ExtensionDex {
-            path: path.to_path_buf(),
+            source,
             file: Some(dex),
         });
         Ok(())
@@ -98,7 +144,7 @@ impl ExtensionSet {
         descriptor: &str,
         dex: &DexFile,
         class_idx: usize,
-        path: &Path,
+        source: &Source,
     ) -> Result<bool> {
         let provider = &self.files[other];
         let provider_dex = provider
@@ -108,15 +154,14 @@ impl ExtensionSet {
         let provider_idx = provider_dex
             .find_class_index(descriptor)
             .expect("a provider defines the classes it is registered for");
-        let image = |dex: &DexFile, class_idx: usize, path: &Path| {
+        let image = |dex: &DexFile, class_idx: usize, source: &Source| {
             write_class(dex, class_idx).map_err(|error| {
                 PatcherError::Bundle(format!(
-                    "failed to write {descriptor} from {}: {error}",
-                    path.display()
+                    "failed to write {descriptor} from {source}: {error}"
                 ))
             })
         };
-        Ok(image(provider_dex, provider_idx, &provider.path)? == image(dex, class_idx, path)?)
+        Ok(image(provider_dex, provider_idx, &provider.source)? == image(dex, class_idx, source)?)
     }
 
     fn provider(&self, descriptor: &str) -> Option<usize> {
@@ -189,7 +234,7 @@ impl PatchContext<'_> {
             let Some(dex) = self.extensions.files[index].file.take() else {
                 continue;
             };
-            debug!(path = %self.extensions.files[index].path.display(), "linking extension");
+            debug!(source = %self.extensions.files[index].source, "linking extension");
             pending.extend(
                 dex.types()
                     .iter()

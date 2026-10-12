@@ -37,9 +37,8 @@ https://github.com/<owner>/<repo>/releases/latest/download/patches.json
 ## Release by hand
 
 ```bash
-./gradlew bundle
+./gradlew bundle -PreleaseTag=v0.1.0
 reseam publish patches build/reseam/my-patches.reseam \
-  --version 0.1.0 \
   --url https://example.com/my-patches-0.1.0.reseam
 ```
 

@@ -36,8 +36,12 @@ pub struct BundleMetadata {
     pub name: String,
     pub author: String,
     pub description: String,
+    /// Empty when the manifest names none.
+    pub license: String,
     pub files: Vec<String>,
     pub public_key: String,
+    /// The release the bundle is; empty for a development build.
+    pub version: String,
     pub engine: String,
     /// Whether the host approves this signer for execution; inspection does not require it.
     pub trusted: bool,

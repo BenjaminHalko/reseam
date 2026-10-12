@@ -92,12 +92,13 @@ fn write_bundle_reseam() -> TestBundle {
     fs::write(
         tmp.path().join("manifest.toml"),
         format!(
-            "[bundle]\nname = 'runtime-test-bundle'\nformat_version = {BUNDLE_FORMAT_VERSION}\n"
+            "[bundle]\nname = 'runtime-test-bundle'\nlicense = 'GPL-3.0'\nformat_version = {BUNDLE_FORMAT_VERSION}\n"
         ),
     )
     .unwrap();
     pack(
         tmp.path(),
+        None,
         &ed25519_dalek::SigningKey::from_bytes(&TEST_SIGNING_SEED),
         &out_path,
     )
@@ -150,6 +151,16 @@ fn open_dex_apk(dex_files: &[&[u8]]) -> (tempfile::TempDir, ApkFile) {
 fn open_split_test_apk() -> (tempfile::TempDir, ApkFile) {
     open_dex_apk(&[])
 }
+
+/** An app with an `Application`, which a settings host needs to start the app runtime. */
+fn open_settings_test_apk() -> (tempfile::TempDir, ApkFile) {
+    open_split_test_apk_with(
+        &manifest_with_application("com.example.App"),
+        &[dex!("entry_app"), dex!("entry_base")],
+    )
+}
+
+const SETTINGS_SCHEMA: &str = "assets/reseam/runtime-test-bundle/settings.json";
 
 fn open_split_test_apk_with(
     base_manifest: &[u8],
@@ -881,7 +892,7 @@ fn same_named_patches_keep_independent_identity_options_dependencies_and_setting
     let patches: Vec<&Patch> = bundle.patches().iter().collect();
     let first = "runtime-test-bundle/app.reseam.test.firstAds";
     let second = "runtime-test-bundle/app.reseam.test.secondAds";
-    let (_apk_dir, mut apk) = open_split_test_apk();
+    let (_apk_dir, mut apk) = open_settings_test_apk();
     let mut first_options = std::collections::HashMap::new();
     first_options.insert("marker".to_owned(), OptionValue::Text("one".into()));
     let mut second_options = std::collections::HashMap::new();
@@ -921,7 +932,7 @@ fn same_named_patches_keep_independent_identity_options_dependencies_and_setting
             expected
         );
     }
-    let schema = entry(&mut apk, 0, "assets/reseam/settings.json").unwrap();
+    let schema = entry(&mut apk, 0, SETTINGS_SCHEMA).unwrap();
     let schema: serde_json::Value = serde_json::from_slice(&schema).unwrap();
     let sections = schema["sections"].as_array().unwrap();
     assert_eq!(sections.len(), 2);
@@ -1090,6 +1101,30 @@ fn method_flags(
 }
 
 #[test]
+fn enum_constants_resolve_by_name_through_obfuscated_fields() {
+    let (_apk_dir, mut apk) = open_dex_apk(&[dex!("obfuscated_enum")]);
+    apply_fixture(&mut apk, "enum-constants", "enumConstants");
+
+    assert_eq!(
+        apk.read_component_entry(0, "assets/enum-constants.txt")
+            .unwrap(),
+        Some(b"Lcom/example/Plan;|c|d".to_vec()),
+        "R8 renamed PREMIUM and FAMILY to c and d; the class query finds the enum by its names"
+    );
+    let written = written_dex(&apk, 0);
+    let code = read_method(&written, "Lcom/example/Account;", "plan")
+        .unwrap()
+        .code
+        .unwrap();
+    let read = code
+        .instructions()
+        .iter()
+        .find_map(reseam_apk::reseam_dex::Instruction::field_ref)
+        .map(|idx| written.string(written.field_id(idx).name).into_owned());
+    assert_eq!(read.as_deref(), Some("c"));
+}
+
+#[test]
 fn queries_skip_the_classes_a_bundle_extension_defines() {
     use reseam_patcher::context::ExtensionSet;
 
@@ -1151,6 +1186,32 @@ fn extensions_share_a_class_they_define_identically() {
         .filter(|dex| dex.find_class_index(SHARED_CLASS).is_some())
         .count();
     assert_eq!(definitions, 1, "both extensions must link the one copy");
+}
+
+#[test]
+fn bundles_cannot_define_app_runtime_classes() {
+    use reseam_apk::reseam_dex::AccessFlags;
+    use reseam_patcher::context::ExtensionSet;
+
+    let mut dex = DexFile::new(DexHeader::new(DexVersion::V035));
+    dex.create_class(
+        "Lapp/reseam/runtime/Reseam;",
+        AccessFlags::PUBLIC,
+        Some("Ljava/lang/Object;"),
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let paths = extension_files(
+        dir.path(),
+        &[("runtime", &reseam_apk::reseam_dex::write(&dex).unwrap())],
+    );
+    let Err(error) = ExtensionSet::load(&paths) else {
+        panic!("a bundle's copy of the app runtime must not load");
+    };
+    assert!(
+        error.to_string().contains("Lapp/reseam/runtime/Reseam;"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -1674,7 +1735,7 @@ fn settings_pages_merge_selected_contributions_and_keep_nested_ancestors() {
             vec!["quality.first"],
         ),
     ] {
-        let (_dir, mut apk) = open_split_test_apk();
+        let (_dir, mut apk) = open_settings_test_apk();
         let selection = PatchSelection {
             enable: [format!("runtime-test-bundle/app.reseam.test.{patch}")].into(),
             ..Default::default()
@@ -1692,7 +1753,7 @@ fn settings_pages_merge_selected_contributions_and_keep_nested_ancestors() {
                 .iter()
                 .all(|r| !matches!(r.status, PatchStatus::Failed { .. }))
         );
-        let bytes = entry(&mut apk, 0, "assets/reseam/settings.json").unwrap();
+        let bytes = entry(&mut apk, 0, SETTINGS_SCHEMA).unwrap();
         let schema: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let pages = schema["pages"].as_array().unwrap();
         assert_eq!(
@@ -1707,7 +1768,6 @@ fn settings_pages_merge_selected_contributions_and_keep_nested_ancestors() {
         let sections = schema["sections"].as_array().unwrap();
         assert!(sections[0]["page"].is_null());
         assert_eq!(sections[0]["settings"][0]["key"], "root.enabled");
-        assert!(sections[0]["settings"][0].get("multiline").is_none());
         assert_eq!(sections[0]["settings"][1]["multiline"], true);
         let quality: Vec<_> = sections.iter().filter(|s| s["page"] == "quality").collect();
         assert_eq!(quality.len(), 1);
@@ -1722,6 +1782,79 @@ fn settings_pages_merge_selected_contributions_and_keep_nested_ancestors() {
         );
         assert_eq!(quality[0]["settings"][0]["default"], true);
     }
+}
+
+#[test]
+fn settings_schemas_carry_the_bundle_license_and_normalized_svg_icons() {
+    let (_dir, mut apk) = open_settings_test_apk();
+    apply_fixture(
+        &mut apk,
+        "Settings navigation first",
+        "navigationFirstPatch",
+    );
+    let schema: serde_json::Value =
+        serde_json::from_slice(&entry(&mut apk, 0, SETTINGS_SCHEMA).unwrap()).unwrap();
+    assert_eq!(schema["license"], "GPL-3.0");
+    let media = schema["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|page| page["id"] == "media")
+        .unwrap();
+    let chevron = &media["icon"]["paths"][0];
+    assert_eq!(chevron["data"], "M 9 18 L 15 12 L 9 6");
+    assert!(
+        chevron["fill"].is_null(),
+        "fill=\"none\" on <svg> is inherited"
+    );
+    assert!(
+        chevron["stroke"]["paint"].is_null(),
+        "currentColor takes the tint"
+    );
+    assert_eq!(chevron["stroke"]["cap"], "round");
+    let dot = &schema["sections"][0]["settings"][0]["icon"];
+    assert_eq!(dot["width"], 4.0);
+    let data = dot["paths"][0]["data"].as_str().unwrap();
+    assert!(
+        data.starts_with("M 0 2 C ") && data.ends_with(" Z"),
+        "the circle becomes cubics, shifted to the viewBox origin: {data}"
+    );
+    assert_eq!(dot["paths"][0]["fill"]["paint"], "#FFFF0000");
+}
+
+#[test]
+fn settings_hosts_start_the_app_runtime_and_gate_on_the_bundles_own_settings() {
+    use reseam_apk::reseam_dex::Instruction::ConstString;
+
+    let (_dir, mut apk) = open_settings_test_apk();
+    apply_fixture(&mut apk, "Settings gated entry", "gatedEntry");
+    let written = written_dex(&apk, 0);
+    assert_eq!(
+        invoked_by(&written, "Lapp/reseam/AppEntry;", "onCreate"),
+        [
+            "Lapp/reseam/runtime/Reseam;->init",
+            "Lapp/reseam/runtime/Reseam;->isEnabled",
+            "Lcom/example/Observer;->started",
+        ],
+        "the app runtime starts before any entry code reads a setting"
+    );
+    let code = read_method(&written, "Lapp/reseam/AppEntry;", "onCreate")
+        .unwrap()
+        .code
+        .unwrap();
+    assert!(
+        code.instructions().iter().any(|instruction| matches!(
+            instruction,
+            ConstString { string, .. } if written.string(*string) == "runtime-test-bundle"
+        )),
+        "gates name the bundle whose settings they read"
+    );
+    assert!(
+        apk.dex().iter().any(|dex| dex
+            .find_class_index("Lapp/reseam/runtime/Reseam;")
+            .is_some()),
+        "the engine links its app runtime"
+    );
 }
 
 #[test]

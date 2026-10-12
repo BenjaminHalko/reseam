@@ -44,10 +44,16 @@ struct Release {
 }
 
 /// Adds a bundle release to `patches.json`, taking the publisher identity
-/// from the signed archive.
+/// and the release version from the signed archive.
 pub fn run_publish_patches(command: &PublishPatchesCommand) -> Result<()> {
     let archive = BundleArchive::open(&command.bundle)
         .with_context(|| format!("failed to open bundle {}", command.bundle.display()))?;
+    let version = archive.info().version.clone();
+    ensure!(
+        !version.is_empty(),
+        "{} has no version; pack it with --version",
+        command.bundle.display()
+    );
     let publisher = {
         let info = archive.info();
         Publisher {
@@ -59,7 +65,13 @@ pub fn run_publish_patches(command: &PublishPatchesCommand) -> Result<()> {
         }
     };
     let patches = archive.patches().to_vec();
-    publish(&command.out, publisher, &command.release, Some(patches))
+    publish(
+        &command.out,
+        publisher,
+        &version,
+        &command.release,
+        Some(patches),
+    )
 }
 
 /// Adds a manager release to `manager.json`.
@@ -72,19 +84,23 @@ pub fn run_publish_manager(command: &PublishManagerCommand) -> Result<()> {
         homepage: None,
         public_key: None,
     };
-    publish(&command.out, publisher, &command.release, None)
+    publish(
+        &command.out,
+        publisher,
+        &command.version,
+        &command.release,
+        None,
+    )
 }
 
 fn publish(
     out: &Path,
     mut publisher: Publisher,
+    version: &str,
     release: &ReleaseArgs,
     patches: Option<Vec<PatchSpec>>,
 ) -> Result<()> {
-    ensure!(
-        !release.version.trim().is_empty(),
-        "--version must not be empty"
-    );
+    ensure!(!version.trim().is_empty(), "the version must not be empty");
     ensure!(!release.url.trim().is_empty(), "--url must not be empty");
 
     let description = match (&release.description, &release.description_file) {
@@ -125,11 +141,11 @@ fn publish(
             .and_then(|index| index.bundle.homepage.clone())
     });
     let mut releases = existing.map(|index| index.releases).unwrap_or_default();
-    releases.retain(|entry| entry.version != release.version);
+    releases.retain(|entry| entry.version != version);
     releases.insert(
         0,
         Release {
-            version: release.version.clone(),
+            version: version.to_owned(),
             created_at,
             description,
             download_url: release.url.clone(),
@@ -195,7 +211,6 @@ mod tests {
 
     fn release(version: &str, notes: &str) -> ReleaseArgs {
         ReleaseArgs {
-            version: version.into(),
             url: format!("https://example.com/{version}"),
             description: Some(notes.into()),
             description_file: None,
@@ -227,6 +242,7 @@ mod tests {
             name: "Reseam Manager".into(),
             author: "Reseam".into(),
             summary: String::new(),
+            version: "1.0.0".into(),
             out: dir.path().join("manager.json"),
             release: release("1.0.0", ""),
         };
@@ -255,7 +271,7 @@ mod tests {
                 prerelease,
                 ..release(version, version)
             };
-            publish(&out, publisher(), &release, Some(Vec::new())).unwrap();
+            publish(&out, publisher(), version, &release, Some(Vec::new())).unwrap();
         }
 
         let index: Index = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
