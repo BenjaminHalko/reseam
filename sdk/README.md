@@ -18,6 +18,7 @@ The types come from [`crates/model`](../crates/model/).
 | `PreparedInspection(request)` | Same as `inspect`, but keeps the opened APK and bundles for one `patch` call. |
 | `patch(PatchRequest, onEvent)` | Runs the patches and writes the signed output. Progress arrives as `RunEvent`s. |
 | `ApkInspection(apkPath, splitPaths)` | Opens an APK, APKM, or XAPK and exposes its metadata, component files, and icon. |
+| `dexMetadata(apkPath, sdk)` | Builds the `.dm` file to install next to a base APK, so Android compiles the app with its baseline profile at install. Null when there is nothing to compile from. |
 | `encodeSelection`, `encodePatchMetadata` | Store a selection or patch list as JSON, with matching `decode` functions. |
 
 - **Trust.** A request lists the bundle signers it accepts in `trust.keys`. The SDK trusts no one on its own. `inspect` reads bundles from any signer and marks each one `trusted` or not; `patch` refuses untrusted ones.

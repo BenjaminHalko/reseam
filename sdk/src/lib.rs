@@ -5,6 +5,7 @@
 
 mod error;
 mod inspect;
+mod install;
 mod metrics;
 mod output;
 mod run;
@@ -12,6 +13,7 @@ mod trust;
 
 pub use error::{HostError, Problem, SdkError, sdk_error};
 pub use inspect::{ApkInspection, PreparedInspection, inspect, inspect_apk, load_bundles};
+pub use install::dex_metadata;
 pub use reseam_apk::{ApplicationIcon, IconLayer};
 pub use reseam_model::{
     ApkMetadata, BundleMetadata, InspectRequest, InspectResponse, PatchArtifact, PatchMetadata,

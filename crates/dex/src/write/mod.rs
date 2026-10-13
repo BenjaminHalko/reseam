@@ -3,6 +3,7 @@
 
 //! DEX serialization entrypoints and helpers.
 
+pub use self::layout::WriteLayout;
 pub use self::part::{DexPart, split_to_fit};
 pub use self::sink::{DexSink, SpoolSink, Spooled};
 use crate::error::Result;
@@ -20,6 +21,7 @@ pub(crate) mod encoded_value;
 pub(crate) mod finalize;
 pub(crate) mod instruction_writer;
 pub(crate) mod intern;
+pub(crate) mod layout;
 pub(crate) mod orchestration;
 pub(crate) mod part;
 pub(crate) mod plan;
@@ -86,28 +88,32 @@ pub(crate) fn is_default_value(v: &EncodedValue) -> bool {
 /// at a time; the complete output is buffered by this convenience API. Use
 /// [`write_spooled`] to stream large output. The source file is not modified.
 pub fn write(dex: &DexFile) -> Result<Vec<u8>> {
-    write_into(dex, None, Vec::new())
+    Ok(write_into(dex, None, Vec::new())?.0)
 }
 
 /// Class `class_idx` serialized as a DEX of its own. Every id pool of a DEX is
 /// sorted, so two definitions of a class written by the same DEX version yield
 /// the same bytes exactly when they are equivalent, whichever files hold them.
 pub fn write_class(dex: &DexFile, class_idx: usize) -> Result<Vec<u8>> {
-    write_into(dex, Some(&part::of_class(dex, class_idx)?), Vec::new())
+    Ok(write_into(dex, Some(&part::of_class(dex, class_idx)?), Vec::new())?.0)
 }
 
 /// Serializes into an anonymous temp file instead of memory, optionally only
-/// one [`DexPart`] of the file.
-pub fn write_spooled(dex: &DexFile, part: Option<&DexPart>) -> Result<Spooled> {
-    write_into(
+/// one [`DexPart`] of the file, with where its pools and classes landed.
+pub fn write_spooled(dex: &DexFile, part: Option<&DexPart>) -> Result<(Spooled, WriteLayout)> {
+    let (sink, layout) = write_into(
         dex,
         part,
         SpoolSink::new().map_err(crate::error::DexError::Io)?,
-    )?
-    .finish()
+    )?;
+    Ok((sink.finish()?, layout))
 }
 
-fn write_into<S: DexSink>(dex: &DexFile, part: Option<&DexPart>, sink: S) -> Result<S> {
+fn write_into<S: DexSink>(
+    dex: &DexFile,
+    part: Option<&DexPart>,
+    sink: S,
+) -> Result<(S, WriteLayout)> {
     let plan = plan::WritePlan::new(dex, part, dex.write_options())?;
     validate_index_limits(&plan)?;
     validate_link_policy(&plan)?;
@@ -118,7 +124,7 @@ fn write_into<S: DexSink>(dex: &DexFile, part: Option<&DexPart>, sink: S) -> Res
         end: w.pos(),
     };
     finalize::sign_member(&mut w, span)?;
-    Ok(w.sink)
+    Ok((w.sink, WriteLayout::of(plan)))
 }
 
 fn validate_link_policy(plan: &plan::WritePlan<'_>) -> Result<()> {
@@ -161,25 +167,28 @@ fn validate_index_limits(plan: &plan::WritePlan<'_>) -> Result<()> {
 /// Each logical DEX file is written sequentially. All offsets are relative
 /// to the start of the physical container.
 pub fn write_container(dex_files: &[DexFile]) -> Result<Vec<u8>> {
-    write_container_into(dex_files.iter().map(|dex| (dex, None)), Vec::new())
+    Ok(write_container_into(dex_files.iter().map(|dex| (dex, None)), Vec::new())?.0)
 }
 
 /// Streams logical DEX members into one v041 container backed by an anonymous
 /// temporary file. Members are emitted in iterator order; an optional part
 /// selects a pool-sized subset. Sources remain unchanged and file-backed.
 /// Empty input produces an empty file. Invalid members fail the whole write.
+/// Layouts follow member order.
 pub fn write_container_spooled<'a>(
     members: impl IntoIterator<Item = (&'a DexFile, Option<&'a DexPart>)>,
-) -> Result<Spooled> {
-    write_container_into(members, SpoolSink::new()?)?.finish()
+) -> Result<(Spooled, Vec<WriteLayout>)> {
+    let (sink, layouts) = write_container_into(members, SpoolSink::new()?)?;
+    Ok((sink.finish()?, layouts))
 }
 
 fn write_container_into<'a, S: DexSink>(
     members: impl IntoIterator<Item = (&'a DexFile, Option<&'a DexPart>)>,
     sink: S,
-) -> Result<S> {
+) -> Result<(S, Vec<WriteLayout>)> {
     let mut w = DexWriter::new(sink);
     let mut spans = Vec::new();
+    let mut layouts = Vec::new();
     for (dex, part) in members {
         let plan = plan::WritePlan::new(dex, part, dex.write_options())?;
         validate_index_limits(&plan)?;
@@ -190,6 +199,7 @@ fn write_container_into<'a, S: DexSink>(
             header,
             end: w.pos(),
         });
+        layouts.push(WriteLayout::of(plan));
     }
     let container_size = w.pos();
     for span in spans {
@@ -197,7 +207,7 @@ fn write_container_into<'a, S: DexSink>(
         finalize::sign_member(&mut w, span)?;
     }
 
-    Ok(w.sink)
+    Ok((w.sink, layouts))
 }
 
 #[derive(Clone, Copy)]

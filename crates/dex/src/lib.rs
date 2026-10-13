@@ -15,7 +15,7 @@
 //!     classes: Loading::Deferred,
 //!     ..ParseOptions::default()
 //! })?;
-//! let rewritten = write_spooled(&dex, None)?;
+//! let (rewritten, _) = write_spooled(&dex, None)?;
 //! let mut output = std::fs::File::create("classes-rewritten.dex")?;
 //! std::io::copy(&mut rewritten.reader(), &mut output)?;
 //! ```
@@ -67,4 +67,4 @@ pub use types::{FieldId, FieldIdx, MethodId, MethodIdx, ProtoIdx, Prototype, Str
 pub use write::write;
 pub use write::write_container;
 pub use write::write_container_spooled;
-pub use write::{DexPart, Spooled, split_to_fit, write_spooled};
+pub use write::{DexPart, Spooled, WriteLayout, split_to_fit, write_spooled};

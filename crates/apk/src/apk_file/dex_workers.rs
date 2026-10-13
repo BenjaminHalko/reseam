@@ -2,19 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #[cfg(not(target_os = "wasi"))]
-use std::fs::File;
-#[cfg(not(target_os = "wasi"))]
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 #[cfg(not(target_os = "wasi"))]
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_os = "wasi"))]
 use std::thread::Scope;
 
-use reseam_dex::DexFile;
+use reseam_dex::{DexFile, WriteLayout};
 #[cfg(not(target_os = "wasi"))]
 use tracing::debug;
 
-use super::write::{DexJob, DexMember};
+use super::write::{DexJob, DexMember, WrittenDex};
 use crate::error::Result;
 #[cfg(not(target_os = "wasi"))]
 use crate::error::invalid;
@@ -23,7 +21,7 @@ use crate::error::invalid;
 pub(super) struct DexEntryStream<'a> {
     _lifetime: std::marker::PhantomData<&'a ()>,
     pending: SyncSender<usize>,
-    receivers: Vec<Receiver<Result<File>>>,
+    receivers: Vec<Receiver<Result<WrittenDex>>>,
     next: usize,
     scheduled: usize,
     job_count: usize,
@@ -42,8 +40,9 @@ impl DexEntryStream<'_> {
         let window = workers.saturating_mul(2).min(jobs.len());
         let (pending, queue) = sync_channel::<usize>(window);
         let queue = Arc::new(Mutex::new(queue));
-        let (outputs, receivers): (Vec<_>, Vec<_>) =
-            (0..window).map(|_| sync_channel::<Result<File>>(1)).unzip();
+        let (outputs, receivers): (Vec<_>, Vec<_>) = (0..window)
+            .map(|_| sync_channel::<Result<WrittenDex>>(1))
+            .unzip();
         let outputs = Arc::new(outputs);
         for _ in 0..workers {
             let queue = Arc::clone(&queue);
@@ -82,12 +81,12 @@ impl DexEntryStream<'_> {
         })
     }
 
-    pub fn next(&mut self) -> Result<File> {
+    pub fn next(&mut self) -> Result<WrittenDex> {
         let receiver = self
             .receivers
             .get(self.next % self.receivers.len().max(1))
             .ok_or_else(|| invalid("dex write", "no DEX workers are running"))?;
-        let file = receiver
+        let written = receiver
             .recv()
             .map_err(|_| invalid("dex write", "DEX worker stopped early"))??;
         self.next += 1;
@@ -97,17 +96,19 @@ impl DexEntryStream<'_> {
                 .map_err(|_| invalid("dex write", "DEX workers stopped early"))?;
             self.scheduled += 1;
         }
-        Ok(file)
+        Ok(written)
     }
 }
 
 fn serialize_dex(
     dex_files: &[DexFile],
     members: &[DexMember],
-) -> Result<reseam_dex::write::Spooled> {
-    let spooled = match members {
+) -> Result<(reseam_dex::write::Spooled, Vec<WriteLayout>)> {
+    let written = match members {
         [member] => {
-            reseam_dex::write_spooled(&dex_files[member.dex_index.0], member.part.as_ref())?
+            let (spooled, layout) =
+                reseam_dex::write_spooled(&dex_files[member.dex_index.0], member.part.as_ref())?;
+            (spooled, vec![layout])
         }
         _ => reseam_dex::write_container_spooled(
             members
@@ -118,7 +119,7 @@ fn serialize_dex(
     if let Some(member) = members.first() {
         dex_files[member.dex_index.0].release_pages();
     }
-    Ok(spooled)
+    Ok(written)
 }
 
 #[cfg(not(target_os = "wasi"))]
@@ -127,9 +128,9 @@ fn compress_dex(
     members: &[DexMember],
     name: &str,
     level: i64,
-) -> Result<File> {
+) -> Result<WrittenDex> {
     let started = std::time::Instant::now();
-    let spooled = serialize_dex(dex_files, members)?;
+    let (spooled, layouts) = serialize_dex(dex_files, members)?;
     let serialized = started.elapsed();
     let deflating = std::time::Instant::now();
     let file = crate::compression::compress_dex_entry(
@@ -145,7 +146,7 @@ fn compress_dex(
         deflate_ms = deflating.elapsed().as_millis() as u64,
         "dex entry written"
     );
-    Ok(file)
+    Ok(WrittenDex { file, layouts })
 }
 
 #[cfg(target_os = "wasi")]

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 mod apk_file;
+pub mod art_profile;
 pub mod axml;
 mod buf;
 mod chunk;

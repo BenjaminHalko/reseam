@@ -152,12 +152,15 @@ impl ApkFile {
         });
         if changed {
             let file = match indices.as_slice() {
-                [index] => reseam_dex::write_spooled(&self.dex.dex_files[*index], None)?,
-                _ => reseam_dex::write_container_spooled(
-                    indices
-                        .iter()
-                        .map(|&index| (&self.dex.dex_files[index], None)),
-                )?,
+                [index] => reseam_dex::write_spooled(&self.dex.dex_files[*index], None)?.0,
+                _ => {
+                    reseam_dex::write_container_spooled(
+                        indices
+                            .iter()
+                            .map(|&index| (&self.dex.dex_files[index], None)),
+                    )?
+                    .0
+                }
             };
             std::io::copy(&mut file.reader(), output)?;
             return Ok(true);

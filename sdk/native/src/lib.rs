@@ -140,6 +140,16 @@ impl ApkInspection {
     }
 }
 
+/// Dex metadata to write into an install session beside the base APK at
+/// `apkPath`, named like it with `.dm` in place of `.apk`, for a device running
+/// API level `sdk`. The installer then compiles the app with its baseline
+/// profile. Null when the APK ships no profile or the release reads none at
+/// install.
+#[export]
+pub fn dex_metadata(apk_path: String, sdk: u32) -> Result<Option<Vec<u8>>, SdkError> {
+    reseam_sdk::dex_metadata(std::path::Path::new(&apk_path), sdk).map_err(SdkError::from)
+}
+
 /// Encodes a selection for persistence in the SDK's serde schema.
 #[export]
 pub fn encode_selection(selection: PatchSelection) -> Result<String, SdkError> {

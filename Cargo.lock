@@ -1230,6 +1230,7 @@ name = "reseam-apk"
 version = "0.23.0"
 dependencies = [
  "bitflags",
+ "flate2",
  "quick-xml",
  "rayon",
  "reseam-dex",

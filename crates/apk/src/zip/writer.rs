@@ -45,10 +45,13 @@ pub(crate) fn write_file(
     reader::copy_spooled(file, writer)
 }
 
-pub(crate) fn copy_compressed(writer: &mut Writer, file: File) -> Result<()> {
+/// Copies the single entry of a compressed ZIP, returning its CRC-32.
+pub(crate) fn copy_compressed(writer: &mut Writer, file: File) -> Result<u32> {
     let mut archive = zip::ZipArchive::new(io::BufReader::new(file))?;
-    writer.raw_copy_file(archive.by_index_raw(0)?)?;
-    Ok(())
+    let entry = archive.by_index_raw(0)?;
+    let crc = entry.crc32();
+    writer.raw_copy_file(entry)?;
+    Ok(crc)
 }
 
 fn options(name: &str, compression: zip::CompressionMethod) -> zip::write::SimpleFileOptions {

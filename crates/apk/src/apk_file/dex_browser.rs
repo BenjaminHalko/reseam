@@ -6,9 +6,9 @@ use std::fs::File;
 use std::os::wasi::io::AsRawFd;
 use std::thread::Scope;
 
-use reseam_dex::DexFile;
+use reseam_dex::{DexFile, WriteLayout};
 
-use super::{DexJob, serialize_dex};
+use super::{DexJob, WrittenDex, serialize_dex};
 use crate::error::{Result, invalid};
 
 #[link(wasm_import_module = "reseam_compression")]
@@ -23,6 +23,7 @@ struct Pending {
     // Files outlive their worker job, including when a preceding job fails.
     _input: File,
     output: Option<File>,
+    layouts: Vec<WriteLayout>,
 }
 
 impl Pending {
@@ -86,9 +87,9 @@ impl<'a> DexEntryStream<'a> {
         let Some(job) = self.jobs.get(self.scheduled) else {
             return Ok(());
         };
-        let input = serialize_dex(self.dex, &job.members)
-            .map_err(|error| error.in_entry(job.name.as_str()))?
-            .into_file();
+        let (spooled, layouts) = serialize_dex(self.dex, &job.members)
+            .map_err(|error| error.in_entry(job.name.as_str()))?;
+        let input = spooled.into_file();
         let output = reseam_storage::temporary_file()?;
         let name = job.name.as_str();
         // SAFETY: the host copies name synchronously. The pending job owns both
@@ -106,12 +107,13 @@ impl<'a> DexEntryStream<'a> {
             ticket: Some(ticket),
             _input: input,
             output: Some(output),
+            layouts,
         });
         self.scheduled += 1;
         Ok(())
     }
 
-    pub fn next(&mut self) -> Result<File> {
+    pub fn next(&mut self) -> Result<WrittenDex> {
         let mut pending = self
             .pending
             .pop_front()
@@ -123,8 +125,9 @@ impl<'a> DexEntryStream<'a> {
             .output
             .take()
             .expect("completed compression owns its output");
+        let layouts = std::mem::take(&mut pending.layouts);
         self.next += 1;
         self.schedule()?;
-        Ok(file)
+        Ok(WrittenDex { file, layouts })
     }
 }

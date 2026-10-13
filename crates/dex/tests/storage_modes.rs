@@ -25,7 +25,7 @@ fn streamed_resident_and_spooled_writers_preserve_the_same_program() -> TestResu
     resident.intern_string("!first sorted string");
     let expected = reseam_dex::write(&resident)?;
     assert_eq!(reseam_dex::write(&streamed)?, expected);
-    let spool = reseam_dex::write_spooled(&streamed, None)?;
+    let (spool, _) = reseam_dex::write_spooled(&streamed, None)?;
     let mut actual = Vec::new();
     spool.reader().read_to_end(&mut actual)?;
     assert_eq!(actual, expected);
@@ -144,7 +144,7 @@ fn prototype_identities_survive_global_pool_overflow_and_part_compaction() -> Te
     assert!(reseam_dex::write(&dex).is_err());
     let parts = reseam_dex::split_to_fit(&dex)?.expect("fixture");
     assert_eq!(parts.len(), 1);
-    let spool = reseam_dex::write_spooled(&dex, Some(&parts[0]))?;
+    let (spool, _) = reseam_dex::write_spooled(&dex, Some(&parts[0]))?;
     let mut bytes = Vec::new();
     spool.reader().read_to_end(&mut bytes)?;
     let parsed = reseam_dex::parse(&bytes, ParseOptions::default())?;
