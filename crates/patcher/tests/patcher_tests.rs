@@ -1125,6 +1125,47 @@ fn enum_constants_resolve_by_name_through_obfuscated_fields() {
 }
 
 #[test]
+fn enum_constants_resolve_when_optimizers_bypass_the_enum_constructor() {
+    let (_apk_dir, mut apk) = open_dex_apk(&[dex!("optimized_enum")]);
+    apply_fixture(
+        &mut apk,
+        "optimized-enum-constants",
+        "optimizedEnumConstants",
+    );
+
+    assert_eq!(
+        apk.read_component_entry(0, "assets/optimized-enum-constants.txt")
+            .unwrap(),
+        Some(b"Lcom/example/License;|c|Lcom/example/Tier;|c".to_vec()),
+        "License constants call Enum.<init> directly; Tier constants are built by their bodies' subclasses"
+    );
+    let written = written_dex(&apk, 0);
+    for (method, owner) in [
+        ("license", "Lcom/example/License;"),
+        ("tier", "Lcom/example/Tier;"),
+    ] {
+        let code = read_method(&written, "Lcom/example/Account;", method)
+            .unwrap()
+            .code
+            .unwrap();
+        let read = code
+            .instructions()
+            .iter()
+            .find_map(reseam_apk::reseam_dex::Instruction::field_ref)
+            .map(|idx| {
+                let field = written.field_id(idx);
+                (
+                    written
+                        .string(written.type_string(field.class))
+                        .into_owned(),
+                    written.string(field.name).into_owned(),
+                )
+            });
+        assert_eq!(read, Some((owner.to_string(), "c".to_string())), "{method}");
+    }
+}
+
+#[test]
 fn queries_skip_the_classes_a_bundle_extension_defines() {
     use reseam_patcher::context::ExtensionSet;
 

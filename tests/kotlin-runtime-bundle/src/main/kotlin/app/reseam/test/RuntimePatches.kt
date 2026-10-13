@@ -735,3 +735,20 @@ val enumConstants =
                 .encodeToByteArray(),
         )
     }
+
+private val licenseEnum = klass("license") { enumConstants("NO_LICENSE", "VALID") }
+private val tierEnum = klass("tier") { enumConstants("BASIC", "PRO") }
+
+val optimizedEnumConstants =
+    fixturePatch("optimized-enum-constants") {
+        val valid = licenseEnum.enumConstant("VALID")
+        val pro = tierEnum.enumConstant("PRO")
+        val account = klass("com.example.Account")
+        account.method("license").replace { returnValue(staticField(valid)) }
+        account.method("tier").replace { returnValue(staticField(pro)) }
+        files.write(
+            "assets/optimized-enum-constants.txt",
+            "${licenseEnum.descriptor}|${valid.name}|${tierEnum.descriptor}|${pro.name}"
+                .encodeToByteArray(),
+        )
+    }
