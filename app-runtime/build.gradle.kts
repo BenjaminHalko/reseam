@@ -18,6 +18,11 @@ tasks.register<Sync>("stage") {
         include("*.hbc")
         into("hermes/v98")
     }
+    from(project(":reseam-app-runtime").tasks.named("generateStrings")) {
+        include("reseam/strings/runtime/**")
+        eachFile { path = "strings/" + path.removePrefix("reseam/strings/runtime/") }
+        includeEmptyDirs = false
+    }
     into(rootDir.resolve("../build/runtime/app"))
     // The engine links this DEX alone, so d8 must not leave definitions in a shared globals file.
     val globals = files(dex).asFileTree.matching { include("**/*.globals") }

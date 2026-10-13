@@ -25,9 +25,10 @@ import app.reseam.patch.patch
 import app.reseam.patch.point
 import app.reseam.patch.replace
 import app.reseam.patch.reserveLocal
-import app.reseam.patch.settings.ToggleSetting
+import app.reseam.patch.settings.SettingsGroup
 import app.reseam.patch.settings.section
 import app.reseam.patch.settings.settingsHost
+import app.reseam.patch.settings.toggle
 import app.reseam.patch.skipWhen
 
 val finalizeOwner =
@@ -161,6 +162,11 @@ val embeddedStrings =
         files.write("assets/embedded-strings.txt", changed.toString().encodeToByteArray())
     }
 
+object DuplicateSettings : SettingsGroup(TestStrings) {
+    val firstEnabled by toggle(default = true, key = "first.enabled")
+    val secondEnabled by toggle(default = true, key = "second.enabled")
+}
+
 val duplicateSettings =
     settingsHost("duplicates") {
         compatibleWith("com.example.test")
@@ -174,7 +180,7 @@ val firstAds =
         val label = stringOption("label.detail", default = "nested")
         settings(
             duplicateSettings,
-            section("First", ToggleSetting("first.enabled", "Enabled", default = true)),
+            section(TestStrings.sectionFirst, DuplicateSettings.firstEnabled),
         )
         execute {
             files.write("assets/first-ads.txt", options[marker].encodeToByteArray())
@@ -191,7 +197,7 @@ val secondAds =
         val marker = stringOption("marker", default = "second")
         settings(
             duplicateSettings,
-            section("Second", ToggleSetting("second.enabled", "Enabled", default = true)),
+            section(TestStrings.sectionSecond, DuplicateSettings.secondEnabled),
         )
         execute { files.write("assets/second-ads.txt", options[marker].encodeToByteArray()) }
     }

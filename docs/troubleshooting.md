@@ -52,7 +52,7 @@ Bundles load on engines of the same release line. Rebuild the bundle with the pl
 ## In the patched app
 
 **`NoClassDefFoundError` or `NoSuchMethodError`**
-Patched code calls a class or method that isn't there. Check the `ExtClass` declaration against your Java code, and stubs against the real app.
+Patched code calls a class or method that isn't there. Check that the extension module is in the bundle, and that your stubs match the real app. An app class your extension implements, such as the app's `kotlin.jvm.functions.Function0`, must be stubbed so it keeps the app's name.
 
 **The update won't install over the patched app**
 It was signed with a different key. Android only accepts updates signed with the same key, so keep and back up your signing key.

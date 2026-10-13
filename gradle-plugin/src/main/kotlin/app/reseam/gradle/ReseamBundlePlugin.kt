@@ -3,7 +3,6 @@
 
 package app.reseam.gradle
 
-import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.DuplicatesStrategy
@@ -28,9 +27,11 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                 .standardOutput
                 .asText
                 .map { bundleJson.decodeFromString<BundleMetadata>(it).name }
-        val env = { name: String -> project.providers.environmentVariable(name) }
-        val releaseTag = project.providers.gradleProperty("releaseTag")
-        val version = env("RESEAM_RELEASE_VERSION").orElse(releaseTag.map { it.removePrefix("v") })
+        project.extensions.create("reseamBundle", ReseamBundleInfo::class.java).name.set(bundleName)
+        val version =
+            project.providers
+                .environmentVariable("RESEAM_RELEASE_VERSION")
+                .orElse(project.providers.gradleProperty("releaseTag").map { it.removePrefix("v") })
         val stageDir = project.layout.buildDirectory.dir("reseam/stage")
         val bundleFile = project.layout.buildDirectory.file(bundleName.map { "reseam/$it.reseam" })
 
@@ -39,30 +40,12 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                 .filter { it.plugins.hasPlugin(ReseamPatchesPlugin::class.java) }
                 .map { it.tasks.named("patchJar", Jar::class.java) }
         }
-        val extensionDex = project.provider {
-            project.subprojects
-                .filter {
-                    it.plugins.hasPlugin(ReseamExtensionPlugin::class.java) &&
-                        !it.plugins.hasPlugin(ReseamJavascriptPlugin::class.java)
-                }
-                .map { it.tasks.named("dex", DexTask::class.java) }
-        }
+        val dex = project.registerBundleDex()
         val extensionHbc = project.provider {
             project.subprojects
                 .filter { it.plugins.hasPlugin(ReseamJavascriptPlugin::class.java) }
                 .map { it.tasks.named(HermesCompiler.TASK, HermesCompileTask::class.java) }
         }
-
-        val globalsDex =
-            project.tasks.register("dexGlobalSynthetics", GlobalSyntheticsDexTask::class.java) {
-                description = "Compiles the extensions' d8 global synthetics into one shared DEX."
-                extensionDex.get().forEach { dexTask ->
-                    globals.from(dexTask.flatMap { it.globals }.map { it.file("classes.globals") })
-                    dependsOn(dexTask)
-                }
-                libraries.from(project.provider { AndroidSdk.platformJar() })
-                output.set(project.layout.buildDirectory.dir("reseam/globals-dex"))
-            }
 
         val stage =
             project.tasks.register("stageBundle", Sync::class.java) {
@@ -79,7 +62,7 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                     }
                 }
                 from(patchJars.map { jars -> jars.map { jar -> jar.map { it.archiveFile } } })
-                extensionDex.get().forEach { dexTask ->
+                dex.modules.get().forEach { dexTask ->
                     dependsOn(dexTask)
                     from(dexTask.map { it.output }) {
                         include("classes*.dex")
@@ -91,7 +74,11 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                         }
                     }
                 }
-                from(globalsDex.map { it.output }) {
+                from(dex.kotlin.map { it.output }) {
+                    include("classes*.dex")
+                    rename { name -> name.replace("classes", "kotlin") }
+                }
+                from(dex.globals.map { it.output }) {
                     include("classes*.dex")
                     rename { name -> name.replace("classes", "d8-globals") }
                 }
@@ -130,92 +117,6 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                 }
             }
 
-        val patchesJson =
-            project.tasks.register("generatePatchesJson", Exec::class.java) {
-                group = "distribution"
-                description = "Writes the patches.json release index for the bundle."
-                dependsOn(bundle)
-                val url =
-                    env("RESEAM_BUNDLE_URL")
-                        .orElse(
-                            releaseTag.zip(bundleName) { tag, name ->
-                                "https://api.reseam.app/patches/$tag/$name.reseam"
-                            }
-                        )
-                val outFile =
-                    env("RESEAM_PATCHES_JSON_OUT")
-                        .map(project::file)
-                        .orElse(
-                            project.layout.buildDirectory.file("reseam/patches.json").map {
-                                it.asFile
-                            }
-                        )
-                val homepage = env("RESEAM_HOMEPAGE").orElse("https://reseam.app")
-                val description = env("RESEAM_RELEASE_DESCRIPTION").orElse("")
-                val descriptionFile = env("RESEAM_RELEASE_DESCRIPTION_FILE").map(project::file)
-                val createdAt = env("RESEAM_RELEASE_CREATED_AT").orElse("")
-                val prerelease =
-                    env("RESEAM_RELEASE_PRERELEASE")
-                        .map { it.equals("true", true) || it == "1" }
-                        .orElse(false)
-                inputs.file(bundleFile)
-                inputs.file(reseamBin)
-                inputs.property("url", url.orElse(""))
-                inputs.property("homepage", homepage)
-                inputs.property("description", description)
-                inputs.file(descriptionFile).optional()
-                inputs.property("createdAt", createdAt)
-                inputs.property("prerelease", prerelease)
-                outputs.upToDateWhen { false }
-                outputs.file(outFile)
-                doFirst {
-                    if (!version.isPresent) {
-                        throw GradleException("RESEAM_RELEASE_VERSION or -PreleaseTag is required")
-                    }
-                    val args =
-                        mutableListOf(
-                            reseamBin.get().absolutePath,
-                            "publish",
-                            "patches",
-                            bundleFile.get().asFile.absolutePath,
-                            "--url",
-                            url.orNull
-                                ?: throw GradleException(
-                                    "RESEAM_BUNDLE_URL or -PreleaseTag is required"
-                                ),
-                            "--homepage",
-                            homepage.get(),
-                            "--out",
-                            outFile.get().absolutePath,
-                        )
-                    description
-                        .get()
-                        .takeIf { it.isNotEmpty() }
-                        ?.let {
-                            args += listOf("--description", it)
-                        }
-                    descriptionFile.orNull?.let {
-                        args += listOf("--description-file", it.absolutePath)
-                    }
-                    createdAt
-                        .get()
-                        .takeIf { it.isNotEmpty() }
-                        ?.let {
-                            args += listOf("--created-at", it)
-                        }
-                    if (prerelease.get()) args += "--prerelease"
-                    outFile.get().parentFile.mkdirs()
-                    commandLine(args)
-                }
-            }
-
-        project.tasks.register("stageRelease", Sync::class.java) {
-            group = "distribution"
-            description = "Collects the bundle and patches.json for a release."
-            dependsOn(patchesJson)
-            from(bundleFile)
-            from(patchesJson.map { it.outputs.files })
-            into(project.layout.buildDirectory.dir("reseam/release"))
-        }
+        project.registerRelease(bundle, bundleFile, bundleName, version, reseamBin)
     }
 }

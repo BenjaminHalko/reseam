@@ -25,7 +25,7 @@ exports.isFeatureEnabled = function (original, name) {
 };
 ```
 
-The build compiles every `.js` file in `src/main/js`, in relative path order, inside one strict function with its own `exports` object. It fetches the pinned compiler for each supported Hermes version and puts the compiled modules in the bundle. Java and JavaScript extensions need separate modules.
+The build compiles every `.js` file in `src/main/js`, in relative path order, inside one strict function with its own `exports` object. It fetches the pinned compiler for each supported Hermes version and puts the compiled modules in the bundle. Kotlin and JavaScript extensions need separate modules.
 
 Keep export assignments unconditional and use literal property names. Reseam checks that a declared export is a callable property of the returned object. Dynamic declarations it cannot establish fail on use.
 

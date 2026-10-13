@@ -37,12 +37,18 @@ internal class ReseamPatchesPlugin : Plugin<Project> {
                 cache.set(project.layout.buildDirectory.dir("reseam/bundles"))
                 output.set(project.layout.buildDirectory.dir("generated/reseam/refs"))
             }
-        project.extensions
-            .getByType(KotlinJvmProjectExtension::class.java)
-            .sourceSets
-            .getByName("main")
-            .kotlin
-            .srcDir(refs)
+        val extensions = project.resolve(ClassVariant.EXPORTS)
+        val bindings =
+            project.tasks.register("generateExtensionBindings", ExportBindingsTask::class.java) {
+                description =
+                    "Generates bindings to the @Export declarations of this module's extensions."
+                classes.from(extensions)
+                output.set(project.layout.buildDirectory.dir("generated/reseam/bindings"))
+            }
+        project.kotlinSourceSet("main").kotlin.apply {
+            srcDir(refs)
+            srcDir(bindings.flatMap { it.output })
+        }
 
         val main = project.extensions.getByType(SourceSetContainer::class.java).getByName("main")
         val dependencies =

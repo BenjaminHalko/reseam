@@ -20,6 +20,12 @@ kotlin {
     sourceSets.all { languageSettings.optIn("kotlin.ExperimentalUnsignedTypes") }
 }
 
+// Settings hosts write the app runtime's string table into every patched app.
+tasks.processResources {
+    dependsOn(gradle.includedBuild("app-runtime").task(":stage"))
+    from(rootDir.resolve("build/runtime/app/strings")) { into("reseam/strings/runtime") }
+}
+
 publishing {
     publications {
         create<MavenPublication>("maven") { from(components["java"]) }

@@ -9,7 +9,7 @@ A bundle is the file you publish: your patches, plus any code they add to apps. 
 ## What you need
 
 - JDK 17.
-- The Android SDK, with `ANDROID_HOME` set to its folder. The build compiles your Java code against the newest `platforms/android-*/android.jar` it finds there.
+- The Android SDK, with `ANDROID_HOME` set to its folder. The build compiles your Kotlin extension code against the newest `platforms/android-*/android.jar` it finds there.
 - The `reseam` CLI, on your `PATH`. Use the version that matches the plugin version in the template's `settings.gradle.kts`. See [Install](/docs/cli/install/).
 - Git.
 
@@ -27,14 +27,14 @@ manifest.toml          bundle name, author, description
 settings.gradle.kts    Reseam plugin version
 apps/example/patch/    two example patches in Kotlin
 apps/example/extensions/screenshots/
-                       Java code one of them adds to the app
+                       Kotlin code one of them adds to the app
 .github/workflows/     a release workflow for GitHub
 ```
 
 The example patches work on any app:
 
 - **Enable debugging** marks the app debuggable in its manifest.
-- **Allow screenshots** sends the app's "block screenshots" calls to Java code from the bundle, which strips that flag.
+- **Allow screenshots** sends the app's "block screenshots" calls to Kotlin code from the bundle, which strips that flag.
 
 ## 2. Make a signing key
 

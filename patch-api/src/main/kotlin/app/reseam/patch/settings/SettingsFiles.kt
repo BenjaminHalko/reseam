@@ -7,13 +7,14 @@ import app.reseam.patch.FileScope
 import app.reseam.patch.types.RunningBundleInfo
 
 /**
- * A bundle's settings as the app runtime reads them: `assets/reseam/<bundle>/settings.json`, and
- * the brand's font beside it.
+ * A bundle's settings as the app runtime reads them: `assets/reseam/<bundle>/settings.json`, the
+ * brand's font and the bundle's string tables beside it, and the app runtime's own strings.
  */
 internal class SettingsFiles(
     private val bundle: RunningBundleInfo,
     private val brand: Brand,
     contributions: List<SettingsSection>,
+    private val extraTables: List<StringTable>,
 ) {
     private val sections = contributions.filter { it.settings.isNotEmpty() }
     private val directory = "assets/reseam/${bundle.name}"
@@ -21,6 +22,31 @@ internal class SettingsFiles(
     fun write(files: FileScope) {
         files.write("$directory/$SCHEMA", schema().toByteArray(Charsets.UTF_8))
         brand.font?.let { files.writeStored("$directory/$FONT", it.file) }
+        (texts().map { it.table } + extraTables).distinct().forEach {
+            writeTable(files, it, "$directory/strings/${it.id}")
+        }
+        writeTable(files, RuntimeStrings, "assets/reseam/runtime/strings")
+    }
+
+    private fun texts(): List<StringRef> {
+        val pages =
+            sections.mapNotNull { it.page }.flatMap { generateSequence(it, SettingsPage::parent) }
+        val settings = sections.flatMap { it.settings }
+        return sections.map { it.title } +
+            pages.flatMap { listOfNotNull(it.title, it.summary) } +
+            settings.flatMap { listOfNotNull(it.title, it.summary) } +
+            settings.filterIsInstance<ChoiceSetting>().flatMap { setting ->
+                setting.choices.map { it.title }.filterIsInstance<StringRef>()
+            }
+    }
+
+    private fun writeTable(files: FileScope, table: StringTable, target: String) {
+        for (locale in table.locales()) {
+            files.write(
+                "$target/$locale.json",
+                table.resource("$locale.json").use { it.readBytes() },
+            )
+        }
     }
 
     private fun schema(): String {
@@ -53,13 +79,13 @@ internal class SettingsFiles(
                 }
                 field("engine", bundle.engine)
                 field("license", bundle.license.ifEmpty { null })
-                field("brand") { brand() }
+                field("brand") { brand(brand, brand.font?.let { FONT }) }
                 field("pages") {
                     array(pages.values.sortedBy { it.order }) { page ->
                         obj {
                             field("id", page.id)
-                            field("title", page.title)
-                            field("summary", page.summary)
+                            field("title") { text(page.title) }
+                            field("summary") { text(page.summary) }
                             field("icon") { vector(page.icon) }
                             field("parent", page.parent?.id)
                         }
@@ -69,7 +95,7 @@ internal class SettingsFiles(
                     array(merged) { (page, title, settings) ->
                         obj {
                             field("page", page)
-                            field("title", title)
+                            field("title") { text(title) }
                             field("settings") { array(settings) { setting(it) } }
                         }
                     }
@@ -77,106 +103,6 @@ internal class SettingsFiles(
             }
         }
     }
-
-    private fun Json.brand() = obj {
-        field("name", brand.name)
-        field("light") { colors(brand.light) }
-        field("dark") { colors(brand.dark) }
-        field("logo") {
-            val logo = brand.logo
-            if (logo == null) nothing()
-            else
-                obj {
-                    field("light") { vector(logo.light) }
-                    field("dark") { vector(logo.dark) }
-                }
-        }
-        field("font", brand.font?.let { FONT })
-        field("typography") {
-            val type = brand.typography
-            obj {
-                field("headlineSmall") { style(type.headlineSmall) }
-                field("titleLarge") { style(type.titleLarge) }
-                field("titleMedium") { style(type.titleMedium) }
-                field("bodyLarge") { style(type.bodyLarge) }
-                field("bodyMedium") { style(type.bodyMedium) }
-                field("labelLarge") { style(type.labelLarge) }
-                field("labelMedium") { style(type.labelMedium) }
-            }
-        }
-    }
-
-    private fun Json.colors(scheme: ColorScheme) = obj {
-        field("primary", scheme.primary)
-        field("onPrimary", scheme.onPrimary)
-        field("primaryContainer", scheme.primaryContainer)
-        field("onPrimaryContainer", scheme.onPrimaryContainer)
-        field("secondaryContainer", scheme.secondaryContainer)
-        field("onSecondaryContainer", scheme.onSecondaryContainer)
-        field("surface", scheme.surface)
-        field("surfaceContainerLow", scheme.surfaceContainerLow)
-        field("surfaceContainer", scheme.surfaceContainer)
-        field("surfaceContainerHigh", scheme.surfaceContainerHigh)
-        field("surfaceContainerHighest", scheme.surfaceContainerHighest)
-        field("onSurface", scheme.onSurface)
-        field("onSurfaceVariant", scheme.onSurfaceVariant)
-        field("outline", scheme.outline)
-        field("outlineVariant", scheme.outlineVariant)
-        field("error", scheme.error)
-        field("onError", scheme.onError)
-        field("errorContainer", scheme.errorContainer)
-        field("onErrorContainer", scheme.onErrorContainer)
-        field("scrim", scheme.scrim)
-    }
-
-    private fun Json.style(style: TextStyle) = obj {
-        field("size", style.size)
-        field("lineHeight", style.lineHeight)
-        field("weight", style.weight)
-        field("tracking", style.tracking)
-    }
-
-    private fun Json.vector(vector: Vector?) {
-        if (vector == null) return nothing()
-        obj {
-            field("width", vector.width)
-            field("height", vector.height)
-            field("paths") {
-                array(vector.paths) { path ->
-                    obj {
-                        field("data", path.data)
-                        field("fill") {
-                            val fill = path.fill
-                            if (fill == null) nothing()
-                            else
-                                obj {
-                                    field("paint") { paint(fill.paint) }
-                                    field("evenOdd", fill.evenOdd)
-                                }
-                        }
-                        field("stroke") {
-                            val stroke = path.stroke
-                            if (stroke == null) nothing()
-                            else
-                                obj {
-                                    field("paint") { paint(stroke.paint) }
-                                    field("width", stroke.width)
-                                    field("cap", stroke.cap.name.lowercase())
-                                    field("join", stroke.join.name.lowercase())
-                                }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /** `null` is the color the screen draws the vector in. */
-    private fun Json.paint(paint: Paint) =
-        when (paint) {
-            Paint.Current -> nothing()
-            is Paint.Solid -> value(paint.color.toString())
-        }
 
     private fun Json.setting(setting: Setting<*>) = obj {
         field(
@@ -189,8 +115,8 @@ internal class SettingsFiles(
             },
         )
         field("key", setting.key)
-        field("title", setting.title)
-        field("summary", setting.summary)
+        field("title") { text(setting.title) }
+        field("summary") { text(setting.summary) }
         field("icon") { vector(setting.icon) }
         when (setting) {
             is ToggleSetting -> field("default", setting.default)
@@ -205,7 +131,7 @@ internal class SettingsFiles(
                     array(setting.choices) { choice ->
                         obj {
                             field("value", choice.value)
-                            field("title", choice.title)
+                            field("title") { text(choice.title) }
                         }
                     }
                 }
@@ -213,76 +139,22 @@ internal class SettingsFiles(
         }
     }
 
-    private fun Json.field(name: String, color: Color) = field(name, color.toString())
+    private fun Json.text(text: DisplayText?) =
+        when (text) {
+            null -> nothing()
+            is StringRef ->
+                obj {
+                    field("table", text.table.id)
+                    field("name", text.name)
+                }
+            is Verbatim -> obj { field("text", text.text) }
+        }
 
     private companion object {
         const val SCHEMA = "settings.json"
         const val FONT = "font.ttf"
     }
-}
 
-internal class Json private constructor() {
-    private val out = StringBuilder()
-    private var first = true
-
-    fun obj(block: Json.() -> Unit) {
-        out.append('{')
-        first = true
-        block()
-        out.append('}')
-        first = false
-    }
-
-    fun <T> array(items: Iterable<T>, item: Json.(T) -> Unit) {
-        out.append('[')
-        items.forEachIndexed { index, value ->
-            if (index > 0) out.append(',')
-            item(value)
-        }
-        out.append(']')
-        first = false
-    }
-
-    fun field(name: String, value: Json.() -> Unit) {
-        if (!first) out.append(',')
-        string(name)
-        out.append(':')
-        value()
-        first = false
-    }
-
-    fun field(name: String, value: String?) = field(name) { value(value) }
-
-    fun field(name: String, value: Number) = field(name) { out.append(value) }
-
-    fun field(name: String, value: Boolean) = field(name) { out.append(value) }
-
-    fun value(value: String?) {
-        if (value == null) nothing() else string(value)
-    }
-
-    fun nothing() {
-        out.append("null")
-    }
-
-    private fun string(value: String) {
-        out.append('"')
-        for (ch in value) {
-            when (ch) {
-                '\\' -> out.append("\\\\")
-                '"' -> out.append("\\\"")
-                '\n' -> out.append("\\n")
-                '\r' -> out.append("\\r")
-                '\t' -> out.append("\\t")
-                else ->
-                    if (ch.code < 0x20) out.append("\\u" + ch.code.toString(16).padStart(4, '0'))
-                    else out.append(ch)
-            }
-        }
-        out.append('"')
-    }
-
-    companion object {
-        fun build(block: Json.() -> Unit): String = Json().apply(block).out.toString()
-    }
+    /** The engine build packs the app runtime's strings into the patch SDK. */
+    private object RuntimeStrings : StringTable("runtime", emptySet())
 }

@@ -76,7 +76,7 @@ planGetter.replace { returnValue(staticField(premium)) }
 
 ## Your own code is left out
 
-Searches only cover the app's own code, not the Java your bundle adds to it (see [Shipping your own code](11_extensions.md)). Otherwise a match would depend on which patches ran before. Add `includeExtensions()` to search it too.
+Searches only cover the app's own code, not the code your bundle adds to it (see [Shipping your own code](11_extensions.md)). Otherwise a match would depend on which patches ran before. Add `includeExtensions()` to search it too.
 
 ## When no query fits
 

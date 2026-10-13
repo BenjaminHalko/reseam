@@ -5,6 +5,7 @@ package app.reseam.gradle
 
 import java.io.File
 import org.gradle.api.Plugin
+import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.initialization.Settings
 
 internal class ReseamWorkspacePlugin : Plugin<Settings> {
@@ -26,46 +27,30 @@ internal class ReseamWorkspacePlugin : Plugin<Settings> {
         }
         workspace(settings)?.let { settings.includeBuild(it) }
 
-        val patches = mutableMapOf<String, String>()
-        val extensions = mutableMapOf<String, String>()
-        for (app in directories(File(root, "apps"))) {
-            File(app, "patch")
-                .takeIf { it.isDirectory }
-                ?.let { patches[include(settings, ":apps:${app.name}:patch", it)] = app.name }
-            for (extension in directories(File(app, "extensions"))) {
-                extensions[
-                    include(
-                        settings,
-                        ":apps:${app.name}:extensions:${extension.name}",
-                        extension,
-                    )] = "${app.name}-${extension.name}"
-            }
-        }
-        // A shared folder is an extension, patches for several apps in `patch/`, or both.
-        for (shared in directories(File(root, "shared"))) {
-            val patch = File(shared, "patch").takeIf { it.isDirectory }
-            if (patch == null || File(shared, "src").isDirectory) {
-                extensions[include(settings, ":shared:${shared.name}", shared)] = shared.name
-            }
-            patch?.let {
-                patches[include(settings, ":shared:${shared.name}:patch", it)] = shared.name
-            }
-        }
-
-        require(
-            (patches.values.map { "$it-patches.jar" } +
-                    extensions.values.map { "$it.dex" } +
-                    "d8-globals.dex")
-                .let { it.size == it.toSet().size }
-        ) {
+        val folders =
+            directories(File(root, "apps")).map { settings.appFolder(it) } +
+                directories(File(root, "shared")).map { settings.sharedFolder(it) }
+        val artifacts = folders.flatMap { it.artifacts() } + "d8-globals.dex" + "kotlin.dex"
+        require(artifacts.size == artifacts.toSet().size) {
             "workspace artifact names must be unique"
         }
         settings.gradle.beforeProject {
-            (patches[path] ?: extensions[path])?.let { reseamArtifact().name.set(it) }
+            if (path == ":")
+                return@beforeProject pluginManager.apply(ReseamBundlePlugin::class.java)
+            val folder = folders.firstOrNull { path in it.paths() } ?: return@beforeProject
+            reseamArtifact().name.set(folder.artifact(path))
             when (path) {
-                ":" -> pluginManager.apply(ReseamBundlePlugin::class.java)
-                in patches -> pluginManager.apply(ReseamPatchesPlugin::class.java)
-                in extensions -> {
+                folder.patch -> {
+                    pluginManager.apply(ReseamPatchesPlugin::class.java)
+                    folder.settings?.let { dependencies.add("api", project(it)) }
+                    folder.extensions
+                        .filterNot { it.javascript }
+                        .forEach {
+                            dependencies.add(ClassVariant.EXPORTS.dependencies, project(it.path))
+                        }
+                }
+                folder.settings -> pluginManager.apply(ReseamSettingsPlugin::class.java)
+                else -> {
                     pluginManager.apply(ReseamExtensionPlugin::class.java)
                     // The engine links the app runtime; extensions only compile against it.
                     plugins.withId("java-library") {
@@ -73,27 +58,32 @@ internal class ReseamWorkspacePlugin : Plugin<Settings> {
                             "compileOnly",
                             "app.reseam:reseam-app-runtime:$reseamVersion",
                         )
+                        // An extension reads its own folder's settings and those of the extensions
+                        // it uses.
+                        folder.settings?.let {
+                            dependencies.add(ClassVariant.SETTINGS.dependencies, project(it))
+                        }
+                        listOf("compileOnly", "implementation").forEach { scope ->
+                            configurations
+                                .getByName(scope)
+                                .dependencies
+                                .withType(ProjectDependency::class.java)
+                                .configureEach {
+                                    val used = folders.firstOrNull { this.path in it.paths() }
+                                    if (used != null && used !== folder)
+                                        used.settings?.let {
+                                            dependencies.add(
+                                                ClassVariant.SETTINGS.dependencies,
+                                                project(it),
+                                            )
+                                        }
+                                }
+                        }
                     }
                 }
             }
         }
     }
-
-    private fun include(settings: Settings, path: String, dir: File): String {
-        settings.include(path)
-        settings.project(path).projectDir = dir
-        return path
-    }
-
-    private fun directories(parent: File): List<File> =
-        (if (!parent.exists()) emptyArray()
-            else
-                parent.listFiles()
-                    ?: throw org.gradle.api.GradleException(
-                        "cannot read workspace directory $parent"
-                    ))
-            .filter { it.isDirectory && !it.name.startsWith(".") && it.name != "build" }
-            .sortedBy { it.name }
 
     private fun workspace(settings: Settings): File? {
         val path =

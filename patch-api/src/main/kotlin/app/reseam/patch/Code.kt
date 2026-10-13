@@ -57,6 +57,8 @@ interface CodeScope {
 
     fun call(method: ExtMethod, vararg args: ValueRef): ValueRef
 
+    operator fun ExtMethod.invoke(vararg args: ValueRef): ValueRef = call(this, *args)
+
     fun call(method: MethodTarget, vararg args: ValueRef): ValueRef
 
     fun callStatic(owner: String, name: String, proto: String, vararg args: ValueRef): ValueRef

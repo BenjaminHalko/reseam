@@ -7,7 +7,7 @@ description: What happens between picking patches and installing the patched app
 ## The pieces
 
 - **Patch**: one change to one app, such as hiding ads. You write it in Kotlin.
-- **Bundle**: a signed `.reseam` file holding your patches and any Java code they add to apps. You publish it.
+- **Bundle**: a signed `.reseam` file holding your patches and any Kotlin code they add to apps. You publish it.
 - **Engine**: the part of Reseam that applies a bundle to an APK. It runs inside Reseam Manager on the phone or desktop, in the `reseam` CLI, and in the browser patcher at reseam.app.
 
 ## A patch run

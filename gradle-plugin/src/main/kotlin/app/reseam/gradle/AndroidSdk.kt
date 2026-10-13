@@ -46,6 +46,9 @@ internal object AndroidSdk {
  */
 abstract class ReseamArtifactExtension {
     abstract val name: org.gradle.api.provider.Property<String>
+
+    /** Where an extension built outside a bundle workspace moves the Kotlin stdlib it ships. */
+    abstract val kotlinPackage: org.gradle.api.provider.Property<String>
 }
 
 internal fun Project.reseamArtifact(): ReseamArtifactExtension =

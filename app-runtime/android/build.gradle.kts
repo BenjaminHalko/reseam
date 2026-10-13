@@ -8,4 +8,12 @@ plugins {
 
 dependencies { compileOnly("com.facebook.react:react-android:0.86.0") }
 
+reseamArtifact { kotlinPackage = "app.reseam.runtime.kotlin" }
+
+reseamStrings {
+    objectName = "app.reseam.runtime.RuntimeStrings"
+    tableId = "runtime"
+    assetDirectory = "reseam/runtime/strings"
+}
+
 publishing { publications { create<MavenPublication>("maven") { from(components["java"]) } } }

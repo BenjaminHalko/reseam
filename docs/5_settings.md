@@ -8,7 +8,7 @@ description: Add switches to the patched app so users can turn features on and o
 
 It takes three parts:
 
-1. **Settings**, declared in Kotlin.
+1. **Settings**, declared in Kotlin in a settings module, with their text in string resources.
 2. **A settings host**, an internal patch that adds your bundle's settings screen to the app.
 3. **Gates**, patched code that reads a setting when the app runs.
 
@@ -20,17 +20,57 @@ The app needs an `Application` class: the settings host starts the app runtime f
 
 ## Declare settings
 
+Settings live in a *settings module*, `apps/<app>/settings/` (or `shared/<name>/settings/`), which the app's patches and extensions both use:
+
+```text
+apps/example/settings/
+  build.gradle.kts
+  src/main/kotlin/app/example/settings/AppSettings.kt
+  src/main/strings/values/strings.xml
+```
+
 ```kotlin
-object AppSettings {
-    val hideAds by toggle("Hide ads", default = true)
-    val feedStyle by choice("Feed style", default = "compact", choices = listOf(Choice("compact", "Compact"), Choice("cards", "Cards")))
+// build.gradle.kts
+reseamStrings { objectName = "app.example.settings.ExampleStrings" }
+```
+
+```kotlin
+object AppSettings : SettingsGroup(ExampleStrings) {
+    val hideAds by toggle(default = true)
+    val feedStyle by choice(
+        default = "compact",
+        choices = listOf(Choice("compact", ExampleStrings.feedStyleCompact), Choice("cards", ExampleStrings.feedStyleCards)),
+    )
 }
 ```
 
-`toggle`, `text`, `folder`, and `choice` each take a title, an optional summary, an optional [icon](#icons), and a default. The storage key comes from the object and property names: `AppSettings.hideAds` is stored as `app_settings.hide_ads`. Each bundle stores its settings apart, so a key only needs to be unique within your bundle.
+```xml
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <string name="hide_ads">Hide ads</string>
+    <string name="hide_ads_summary">Removes ads from the feed.</string>
+    <string name="feed_style">Feed style</string>
+    <string name="feed_style_compact">Compact</string>
+    <string name="feed_style_cards">Cards</string>
+</resources>
+```
+
+`toggle`, `text`, `folder`, and `choice` take a default and an optional [icon](#icons). A setting's title is the string named after its property in snake case, and its summary the same name with `_summary`, when there is one. A missing title fails the build. The build generates `ExampleStrings` from `strings.xml`, with one member per string, for choices, [sections](#register-a-patchs-settings) and [pages](#pages).
+
+The storage key comes from the object and property names: `AppSettings.hideAds` is stored as `app_settings.hide_ads`. Each bundle stores its settings apart, so a key only needs to be unique within your bundle.
 
 > [!WARNING]
 > Renaming the object or the property changes the key and resets the setting for every user. Pin it with `key = "..."` before your first release.
+
+A patch module outside the `apps/` and `shared/` layout uses a settings module through `api(project(":settings"))` and applies the `app.reseam.settings` plugin to it.
+
+## Translations
+
+Translations go next to the default strings, in Android's folder names: `values-de/strings.xml`, `values-pt-rBR/strings.xml`, `values-b+sr+Latn/strings.xml`. The app shows each string in the app's current language (including Android's per-app language setting) and falls back to the default when a translation lacks it.
+
+- Escape apostrophes and quotes as `\'` and `\"`.
+- A string with arguments wraps each in `xliff:g`, whose `id` names the argument: `Saved to <xliff:g id="folder">%1$s</xliff:g>`. `%s` takes text, `%d` a whole number, `%f` a decimal number.
+- `<plurals>` picks its form by an integer argument with id `count`.
+- A translation must keep the default's arguments; one that adds, drops or retypes an argument, or translates a string the default lacks, fails the build.
 
 ## Add the settings screen
 
@@ -45,7 +85,7 @@ val appSettings = settingsHost("example") {
 }
 ```
 
-`install` runs after every patch that added settings. Use it to give users a way in, typically a row in the app's own settings. `openSettings()` in a code block shows your bundle's settings over the app's current screen, from any thread. When the app builds the row from an intent, such as an androidx `Preference` with an `<intent>`, call `opensSettings()` on that `<intent>` element and redirect the call that starts it to `Reseam.startActivity`.
+`install` runs after every patch that added settings. `strings(ExampleStrings)` ships a string table your extensions read even when no setting on the screen uses it. Use it to give users a way in, typically a row in the app's own settings. `openSettings()` in a code block shows your bundle's settings over the app's current screen, from any thread. When the app builds the row from an intent, such as an androidx `Preference` with an `<intent>`, call `opensSettings()` on that `<intent>` element and redirect the call that starts it to `Reseam.startActivity`.
 
 The screen opens with an about card: your brand's logo and name, your bundle's version, the engine version, and the `license` in your [`manifest.toml`](13_bundles.md#manifesttoml).
 
@@ -82,7 +122,7 @@ Settings and pages can lead with an icon:
 ```kotlin
 private val ads = Vector.svg(Files::class.java.getResource("/icons/megaphone.svg")!!.readText())
 
-val hideAds by toggle("Hide ads", default = true, icon = ads)
+val hideAds by toggle(default = true, icon = ads)
 ```
 
 `Vector.svg` reads an SVG when your patches load: paths and basic shapes, with fills and strokes. `currentColor` draws in the screen's icon color, so line icons such as [Lucide](https://lucide.dev) work as they are. Transforms, `style` attributes, gradients, and text fail, which fails the build.
@@ -92,7 +132,7 @@ val hideAds by toggle("Hide ads", default = true, icon = ads)
 ```kotlin
 val hideAds = patch("Hide ads") {
     compatibleWith(EXAMPLE_APP)
-    settings(appSettings, section("Ads", AppSettings.hideAds))
+    settings(appSettings, section(ExampleStrings.sectionAds, AppSettings.hideAds))
 
     execute {
         gate(AppSettings.hideAds) {
@@ -108,7 +148,7 @@ When a setting depends on an option, register it from a block. It runs after `ex
 
 ```kotlin
 settings(appSettings) {
-    listOf(section("Name", AppSettings.appName))
+    listOf(section(ExampleStrings.sectionName, AppSettings.appName))
 }
 ```
 
@@ -117,37 +157,45 @@ settings(appSettings) {
 Group sections behind a row on the screen with a page:
 
 ```kotlin
-val mediaPage = SettingsPage("media", "Media", order = 10, summary = "Playback and quality", icon = media)
+val mediaPage = SettingsPage("media", ExampleStrings.pageMedia, order = 10, summary = ExampleStrings.pageMediaSummary, icon = media)
 
-settings(appSettings, section(mediaPage, "Playback", AppSettings.autoplay))
+settings(appSettings, section(mediaPage, ExampleStrings.sectionPlayback, AppSettings.autoplay))
 ```
+
+A choice whose title the user typed into an option, such as a custom app name, uses `Verbatim(name)` instead of a string, and shows as is in every language.
 
 A page can have a `parent` page. Lower `order` comes first. Sections with the same page and title merge into one. Pages without settings from running patches are left out.
 
 ## Read settings in extensions
 
-[Extensions](11_extensions.md) compile against the app runtime. They reach your bundle by its name from `manifest.toml`:
+[Extensions](11_extensions.md) compile against objects the build generates from your settings module: the same names, with a value for each setting, read and written in the app.
 
-```java
-Settings settings = Reseam.bundle("my-patches").settings();
-if (settings.getBoolean("app_settings.hide_ads", true)) { ... }
-String style = settings.getChoice("app_settings.feed_style");
+```kotlin
+import app.example.settings.AppSettings
+import app.example.settings.ExampleStrings
+
+if (AppSettings.hideAds.value) hide(view)
+val style = AppSettings.feedStyle.value
+AppSettings.feedStyle.reset()
+Toast.makeText(context, ExampleStrings.downloadSaved(folder), Toast.LENGTH_SHORT).show()
 ```
 
-`getChoice` returns the stored value when the setting still lists it, and the default otherwise. `setBoolean` and `setString` store values, including ones that are not settings on the screen.
+A choice reads as the stored value while the setting still lists it, and as the default otherwise. Before the app runtime has started, values read as their defaults. String members without arguments are properties; the others are functions named after the string, taking its `xliff:g` arguments in order.
+
+Outside the `apps/` and `shared/` layout, an extension adds a settings module with `reseamSettings(project(":settings"))`.
 
 ## Branded components
 
 Extensions can build their own screens and dialogs in your brand:
 
-```java
-Ui ui = Reseam.bundle("my-patches").ui(activity);
+```kotlin
+val ui = Reseam.bundle("my-patches").ui(activity)
 ui.dialog()
-        .title("Download finished")
-        .message("Saved to Downloads.")
-        .dismissAction("Close")
-        .action("Open", () -> open(file))
-        .show();
+    .title(ExampleStrings.downloadFinished)
+    .message(ExampleStrings.downloadSavedToDownloads)
+    .dismissAction(ExampleStrings.close)
+    .action(ExampleStrings.open) { open(file) }
+    .show()
 ```
 
 `Ui` builds text in the brand's type roles, buttons, list items in groups, switches, search bars, outlined text fields, top bars, and dialogs, all in the system's current theme.

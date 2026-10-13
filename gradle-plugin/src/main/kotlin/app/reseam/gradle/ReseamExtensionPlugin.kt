@@ -19,6 +19,7 @@ internal class ReseamExtensionPlugin : Plugin<Project> {
         }
         project.reseamArtifact()
         project.pluginManager.apply("java-library")
+        project.applyExtensionKotlin()
         project.extensions.configure(JavaPluginExtension::class.java) {
             toolchain.languageVersion.set(JavaLanguageVersion.of(17))
             sourceCompatibility = JavaVersion.VERSION_17
@@ -42,16 +43,34 @@ internal class ReseamExtensionPlugin : Plugin<Project> {
         val sourceSets = project.extensions.getByType(SourceSetContainer::class.java)
         val stubs = sourceSets.create("stubs")
         val main = sourceSets.getByName("main")
-        main.compileClasspath += stubs.output
+        main.compileClasspath += stubs.output + project.resolve(ClassVariant.SETTINGS)
         val platform = project.files(project.provider { AndroidSdk.platformJar() })
         project.dependencies.add("compileOnly", platform)
         project.dependencies.add("stubsCompileOnly", platform)
 
+        project.registerStrings()?.let { strings ->
+            project.kotlinSourceSet("main").kotlin.srcDir(strings.flatMap { it.device })
+        }
+        val relocate =
+            project.tasks.register("relocateKotlin", RelocateKotlinTask::class.java) {
+                classes.from(main.output.classesDirs, runtime)
+                appClasses.from(stubs.output.classesDirs)
+                kotlinPackage.set(project.kotlinPackage())
+                output.set(project.layout.buildDirectory.dir("reseam/relocated"))
+            }
+        // Outside a bundle the extension ships its own stdlib, and callers relocate theirs
+        // elsewhere.
+        val standalone =
+            if (project.inBundle()) null else project.kotlinStdlibFor(relocate, platform)
+        val apiCheck =
+            project.tasks.register("checkKotlinFreeApi", KotlinFreeApiTask::class.java) {
+                classes.from(main.output.classesDirs)
+            }
         val dex =
             project.tasks.register("dex", DexTask::class.java) {
                 group = "build"
                 description = "Compiles the extension and its dependencies to DEX."
-                sources.from(main.output.classesDirs, runtime)
+                sources.from(relocate.flatMap { it.output })
                 shippedAars.from(
                     runtime.incoming
                         .artifactView {
@@ -64,8 +83,14 @@ internal class ReseamExtensionPlugin : Plugin<Project> {
                 )
                 libraries.from(platform)
                 output.set(project.layout.buildDirectory.dir("reseam/dex"))
-                globals.set(project.layout.buildDirectory.dir("reseam/globals"))
+                if (standalone == null) {
+                    globals.set(project.layout.buildDirectory.dir("reseam/globals"))
+                } else {
+                    sources.from(standalone.flatMap { it.output })
+                    dependsOn(apiCheck)
+                }
             }
+        project.publish(ClassVariant.EXPORTS, main)
         project.tasks.named("build") { dependsOn(dex) }
     }
 }

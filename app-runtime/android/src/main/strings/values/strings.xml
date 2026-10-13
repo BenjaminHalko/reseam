@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <string name="settings">Settings</string>
+    <string name="search_settings">Search settings</string>
+    <string name="no_search_results">No settings match your search.</string>
+    <string name="no_settings">The patches you chose have no settings here.</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="restore_default">Restore the default</string>
+    <string name="restart_title">Restart to apply changes?</string>
+    <string name="restart_message">Most settings take effect after the app restarts.</string>
+    <string name="later">Later</string>
+    <string name="restart">Restart</string>
+    <string name="version">Version <xliff:g id="version">%1$s</xliff:g></string>
+    <string name="engine">Engine <xliff:g id="engine">%1$s</xliff:g></string>
+    <string name="engine_license">Engine <xliff:g id="engine">%1$s</xliff:g> · <xliff:g id="license">%2$s</xliff:g></string>
+    <string name="clear_search">Clear search</string>
+    <string name="back">Back</string>
+</resources>

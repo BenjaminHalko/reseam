@@ -5,12 +5,13 @@ package app.reseam.test
 
 import app.reseam.patch.appEntry
 import app.reseam.patch.patch
+import app.reseam.patch.settings.SettingsGroup
 import app.reseam.patch.settings.SettingsPage
-import app.reseam.patch.settings.TextSetting
-import app.reseam.patch.settings.ToggleSetting
 import app.reseam.patch.settings.Vector
 import app.reseam.patch.settings.section
 import app.reseam.patch.settings.settingsHost
+import app.reseam.patch.settings.text
+import app.reseam.patch.settings.toggle
 import app.reseam.patch.settings.whenEnabled
 
 private val chevron =
@@ -26,21 +27,30 @@ private val dot =
             <circle cx="12" cy="12" r="2" fill="#f00"/></svg>"""
     )
 
-private val navigationRoot = SettingsPage("media", "Media", order = 10, icon = chevron)
-private val navigationChild = SettingsPage("quality", "Quality", navigationRoot, order = 11)
-private val navigationOther = SettingsPage("general", "General", order = 0)
-private val navigationEmpty = SettingsPage("empty", "Empty")
-private val navigationFirst = ToggleSetting("quality.first", "First", default = true)
-private val navigationSecond = ToggleSetting("quality.second", "Second", default = false)
+private val navigationRoot =
+    SettingsPage("media", TestStrings.pageMedia, order = 10, icon = chevron)
+private val navigationChild =
+    SettingsPage("quality", TestStrings.pageQuality, navigationRoot, order = 11)
+private val navigationOther = SettingsPage("general", TestStrings.pageGeneral, order = 0)
+private val navigationEmpty = SettingsPage("empty", TestStrings.pageEmpty)
+
+object NavigationSettings : SettingsGroup(TestStrings) {
+    val rootEnabled by toggle(default = false, key = "root.enabled", icon = dot)
+    val rootLines by text(default = "", multiline = true, key = "root.lines")
+    val qualityFirst by toggle(default = true, key = "quality.first")
+    val qualitySecond by toggle(default = false, key = "quality.second")
+    val generalEnabled by toggle(default = true, key = "general.enabled")
+    val gateEnabled by toggle(default = true, key = "gate.enabled")
+}
 
 val navigationSettings =
     settingsHost("navigation") {
         compatibleWith("com.example.test")
         settings(
             section(
-                "Root",
-                ToggleSetting("root.enabled", "Root", default = false, icon = dot),
-                TextSetting("root.lines", "Lines", default = "", multiline = true),
+                TestStrings.sectionRoot,
+                NavigationSettings.rootEnabled,
+                NavigationSettings.rootLines,
             )
         )
     }
@@ -51,8 +61,8 @@ val navigationFirstPatch =
         enabledByDefault(false)
         settings(
             navigationSettings,
-            section(navigationChild, "Quality", navigationFirst),
-            section(navigationEmpty, "Empty"),
+            section(navigationChild, TestStrings.sectionQuality, NavigationSettings.qualityFirst),
+            section(navigationEmpty, TestStrings.sectionEmpty),
         )
     }
 
@@ -63,25 +73,27 @@ val navigationSecondPatch =
         dependsOn(navigationFirstPatch)
         settings(
             navigationSettings,
-            section(navigationChild, "Quality", navigationFirst, navigationSecond),
             section(
-                navigationOther,
-                "General",
-                ToggleSetting("general.enabled", "General", default = true),
+                navigationChild,
+                TestStrings.sectionQuality,
+                NavigationSettings.qualityFirst,
+                NavigationSettings.qualitySecond,
             ),
+            section(navigationOther, TestStrings.sectionGeneral, NavigationSettings.generalEnabled),
         )
     }
-
-private val gateToggle = ToggleSetting("gate.enabled", "Gate", default = true)
 
 val gatedEntry =
     patch("Settings gated entry") {
         compatibleWith("com.example.test")
         enabledByDefault(false)
-        settings(navigationSettings, section("Gate", gateToggle))
+        settings(
+            navigationSettings,
+            section(TestStrings.sectionGate, NavigationSettings.gateEnabled),
+        )
         execute {
             appEntry {
-                whenEnabled(gateToggle) {
+                whenEnabled(NavigationSettings.gateEnabled) {
                     callStatic(
                         "com.example.Observer",
                         "started",

@@ -5,12 +5,6 @@
 
 package app.reseam.patch.settings
 
-import app.reseam.patch.ActiveRuntime
-import app.reseam.patch.CompatiblePackage
-import app.reseam.patch.PatchDeclaration
-import app.reseam.patch.PatchRuntime
-import app.reseam.patch.ReseamPatch
-import app.reseam.patch.appEntry
 import kotlin.properties.PropertyDelegateProvider
 import kotlin.properties.ReadOnlyProperty
 
@@ -20,48 +14,57 @@ import kotlin.properties.ReadOnlyProperty
  */
 sealed class Setting<T>(
     val key: String,
-    val title: String,
-    val summary: String?,
+    internal val property: String,
+    val title: StringRef,
+    val summary: StringRef?,
     val default: T,
     val icon: Vector?,
 ) {
     override fun toString() = key
 }
 
-class ToggleSetting(
+class ToggleSetting
+internal constructor(
     key: String,
-    title: String,
-    summary: String? = null,
+    property: String,
+    title: StringRef,
+    summary: StringRef?,
     default: Boolean,
-    icon: Vector? = null,
-) : Setting<Boolean>(key, title, summary, default, icon)
+    icon: Vector?,
+) : Setting<Boolean>(key, property, title, summary, default, icon)
 
 /** [multiline] lets the value hold one entry per line. */
-class TextSetting(
+class TextSetting
+internal constructor(
     key: String,
-    title: String,
-    summary: String? = null,
+    property: String,
+    title: StringRef,
+    summary: StringRef?,
     default: String,
-    val multiline: Boolean = false,
-    icon: Vector? = null,
-) : Setting<String>(key, title, summary, default, icon)
+    val multiline: Boolean,
+    icon: Vector?,
+) : Setting<String>(key, property, title, summary, default, icon)
 
-class FolderSetting(
+class FolderSetting
+internal constructor(
     key: String,
-    title: String,
-    summary: String? = null,
+    property: String,
+    title: StringRef,
+    summary: StringRef?,
     default: String,
-    icon: Vector? = null,
-) : Setting<String>(key, title, summary, default, icon)
+    icon: Vector?,
+) : Setting<String>(key, property, title, summary, default, icon)
 
-class ChoiceSetting(
+class ChoiceSetting
+internal constructor(
     key: String,
-    title: String,
-    summary: String? = null,
+    property: String,
+    title: StringRef,
+    summary: StringRef?,
     default: String,
     val choices: List<Choice>,
-    icon: Vector? = null,
-) : Setting<String>(key, title, summary, default, icon) {
+    icon: Vector?,
+) : Setting<String>(key, property, title, summary, default, icon) {
     init {
         require(choices.any { it.value == default }) {
             "Choice setting '$key' defaults to '$default', which is not a choice"
@@ -70,10 +73,20 @@ class ChoiceSetting(
 
     /** The same stored setting with other choices, for a patch that extends it from its options. */
     fun copy(default: String = this.default, choices: List<Choice> = this.choices) =
-        ChoiceSetting(key, title, summary, default, choices, icon)
+        ChoiceSetting(key, property, title, summary, default, choices, icon)
 }
 
-data class Choice(val value: String, val title: String)
+data class Choice(val value: String, val title: DisplayText)
+
+/**
+ * Declares settings as properties. A setting's title is the string named after the property in
+ * snake case (`hideAds` reads `hide_ads`); its summary, when present, is `hide_ads_summary`. Keys
+ * start with [keyPrefix], by default the group's name in snake case, so groups that split one set
+ * of settings can keep its keys.
+ */
+abstract class SettingsGroup(val strings: StringTable, keyPrefix: String? = null) {
+    internal val keyPrefix: String = keyPrefix ?: snakeCase(this::class.simpleName!!)
+}
 
 /**
  * A reusable destination, shown as a row on its parent page. Parents allow arbitrary nesting; lower
@@ -81,15 +94,14 @@ data class Choice(val value: String, val title: String)
  */
 data class SettingsPage(
     val id: String,
-    val title: String,
+    val title: StringRef,
     val parent: SettingsPage? = null,
     val order: Int = 0,
-    val summary: String? = null,
+    val summary: StringRef? = null,
     val icon: Vector? = null,
 ) {
     init {
         require(id.isNotBlank()) { "A settings page needs a non-blank id" }
-        require(title.isNotBlank()) { "A settings page needs a non-blank title" }
         var ancestor = parent
         while (ancestor != null) {
             require(ancestor.id != id) { "Settings page '$id' cannot be its own ancestor" }
@@ -99,67 +111,71 @@ data class SettingsPage(
 }
 
 data class SettingsSection(
-    val title: String,
+    val title: StringRef,
     val settings: List<Setting<*>>,
     val page: SettingsPage? = null,
 )
 
 /** A section on the root settings screen. */
-fun section(title: String, vararg settings: Setting<*>) = SettingsSection(title, settings.toList())
+fun section(title: StringRef, vararg settings: Setting<*>) =
+    SettingsSection(title, settings.toList())
 
 /** Contributes settings to a page shared by any number of patches. */
-fun section(page: SettingsPage, title: String, vararg settings: Setting<*>) =
+fun section(page: SettingsPage, title: StringRef, vararg settings: Setting<*>) =
     SettingsSection(title, settings.toList(), page)
 
 /**
- * Declares a setting as a property: `val hideAds by toggle("Hide ads", default = true)`. The key
- * derives from the owner and property names unless given.
+ * Declares a setting as a property of a [SettingsGroup]: `val hideAds by toggle(default = true)`.
+ * The key derives from the group and property names unless given.
  */
-fun toggle(
-    title: String,
-    summary: String? = null,
-    default: Boolean,
-    key: String? = null,
-    icon: Vector? = null,
-) = SettingDelegate(key) { ToggleSetting(it, title, summary, default, icon) }
+fun toggle(default: Boolean, key: String? = null, icon: Vector? = null) =
+    SettingDelegate(key) { ToggleSetting(it.key, it.property, it.title, it.summary, default, icon) }
 
-fun text(
-    title: String,
-    summary: String? = null,
-    default: String,
-    multiline: Boolean = false,
-    key: String? = null,
-    icon: Vector? = null,
-) = SettingDelegate(key) { TextSetting(it, title, summary, default, multiline, icon) }
+fun text(default: String, multiline: Boolean = false, key: String? = null, icon: Vector? = null) =
+    SettingDelegate(key) {
+        TextSetting(it.key, it.property, it.title, it.summary, default, multiline, icon)
+    }
 
-fun folder(
-    title: String,
-    summary: String? = null,
-    default: String,
-    key: String? = null,
-    icon: Vector? = null,
-) = SettingDelegate(key) { FolderSetting(it, title, summary, default, icon) }
+fun folder(default: String, key: String? = null, icon: Vector? = null) =
+    SettingDelegate(key) { FolderSetting(it.key, it.property, it.title, it.summary, default, icon) }
 
-fun choice(
-    title: String,
-    summary: String? = null,
-    default: String,
-    choices: List<Choice>,
-    key: String? = null,
-    icon: Vector? = null,
-) = SettingDelegate(key) { ChoiceSetting(it, title, summary, default, choices, icon) }
+fun choice(default: String, choices: List<Choice>, key: String? = null, icon: Vector? = null) =
+    SettingDelegate(key) {
+        ChoiceSetting(it.key, it.property, it.title, it.summary, default, choices, icon)
+    }
+
+internal class SettingDeclaration(
+    val key: String,
+    val property: String,
+    val title: StringRef,
+    val summary: StringRef?,
+)
 
 class SettingDelegate<S : Setting<*>>
 internal constructor(
     private val key: String?,
-    private val create: (key: String) -> S,
-) : PropertyDelegateProvider<Any?, ReadOnlyProperty<Any?, S>> {
+    private val create: (SettingDeclaration) -> S,
+) : PropertyDelegateProvider<SettingsGroup, ReadOnlyProperty<SettingsGroup, S>> {
     override fun provideDelegate(
-        thisRef: Any?,
+        thisRef: SettingsGroup,
         property: kotlin.reflect.KProperty<*>,
-    ): ReadOnlyProperty<Any?, S> {
-        val owner = thisRef?.let { it::class.simpleName }?.let { snakeCase(it) + "." }.orEmpty()
-        val setting = create(key ?: (owner + snakeCase(property.name)))
+    ): ReadOnlyProperty<SettingsGroup, S> {
+        val name = snakeCase(property.name)
+        val strings = thisRef.strings
+        val title =
+            strings.find(name)
+                ?: error(
+                    "${thisRef::class.simpleName}.${property.name} has no title: add '$name' to $strings"
+                )
+        val setting =
+            create(
+                SettingDeclaration(
+                    key ?: (thisRef.keyPrefix + "." + name),
+                    property.name,
+                    title,
+                    strings.find(name + "_summary"),
+                )
+            )
         return ReadOnlyProperty { _, _ -> setting }
     }
 }
@@ -175,85 +191,3 @@ internal fun snakeCase(name: String): String = buildString {
         append(ch.lowercaseChar())
     }
 }
-
-/**
- * The internal patch that gives one app the running bundle's settings screen. Patches register
- * their sections with it; after they have all run it writes the bundle's settings into the app,
- * links the app runtime, and runs the app-specific install.
- */
-class SettingsHost
-internal constructor(
-    val appId: String,
-    override val compatibleWith: List<CompatiblePackage>,
-    override val dependencies: List<ReseamPatch>,
-    private val ownSections: List<SettingsSection>,
-    private val brand: Brand,
-    private val install: PatchRuntime.() -> Unit,
-) : ReseamPatch {
-    override val name: String? = null
-    override val description = "Settings for $appId"
-
-    fun register(patch: ReseamPatch, sections: List<SettingsSection>) {
-        if (sections.isEmpty()) return
-        ActiveRuntime.current.afterSuccess {
-            ActiveRuntime.current.run.register(this, patch, sections)
-        }
-    }
-
-    /** The host runs before dependents, so its own sections lead the screen. */
-    override fun execute(ctx: PatchRuntime) {
-        ctx.run.clear(this)
-        register(this, ownSections)
-    }
-
-    override fun afterDependents(ctx: PatchRuntime) {
-        try {
-            ctx.run.claimSettings(ctx.bundle.name, this)
-            SettingsFiles(ctx.bundle, brand, ctx.run.sections(this)).write(ctx.files)
-            ctx.install()
-            // appEntry code runs newest first, so this init precedes every other entry hook.
-            appEntry { call(Reseam.init, application) }
-        } finally {
-            ctx.run.clear(this)
-        }
-    }
-
-    override fun toString() = "$appId settings"
-}
-
-class SettingsHostBuilder internal constructor() : PatchDeclaration() {
-    private var installBlock: PatchRuntime.() -> Unit = {}
-    private val sections = mutableListOf<SettingsSection>()
-    private var brand = Brand.DEFAULT
-
-    /** Sections the host owns, for settings that belong to no single feature patch. */
-    fun settings(vararg sections: SettingsSection) {
-        this.sections += sections
-    }
-
-    /** How the settings screen and the components the bundle's extensions build look. */
-    fun brand(brand: Brand) {
-        this.brand = brand
-    }
-
-    /**
-     * Wires the settings screen into the app, typically a row in the app's own settings that calls
-     * [openSettings]; runs once every patch has registered its sections.
-     */
-    fun install(block: PatchRuntime.() -> Unit) {
-        installBlock = block
-    }
-
-    internal fun build(appId: String) =
-        SettingsHost(
-            appId,
-            compatibility.toList(),
-            dependencies.toList(),
-            sections.toList(),
-            brand,
-            installBlock,
-        )
-}
-
-fun settingsHost(appId: String, block: SettingsHostBuilder.() -> Unit): SettingsHost =
-    SettingsHostBuilder().apply(block).build(appId)

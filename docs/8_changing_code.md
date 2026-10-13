@@ -84,14 +84,12 @@ Hooks written inside `gate(setting) { }` only take effect while the setting is o
 
 ## Calling your own code
 
-For anything longer than a few lines, write Java in an [extension](11_extensions.md) and call it:
+For anything longer than a few lines, write Kotlin in an [extension](11_extensions.md), mark what patches call with `@Export`, and call it through the generated binding:
 
 ```kotlin
-object AdBlocker : ExtClass("app.example.ext.AdBlocker") {
-    val onFeedLoad by static(Type.List)
-}
+import app.example.ads.bindings.AdBlocker
 
-loadFeed.before { call(AdBlocker.onFeedLoad, thisObject.field(feedItems)) }
+loadFeed.before { AdBlocker.onFeedLoad(thisObject.field(feedItems)) }
 ```
 
 ### Redirecting a call
@@ -109,7 +107,7 @@ Calls made from your own extension code keep going to the original, so your meth
 `appEntry { }` adds code that runs once when the app's process starts, before any screen opens. `application` is the app's `Application` object:
 
 ```kotlin
-appEntry { call(AdBlocker.init, application) }
+appEntry { AdBlocker.init(application) }
 ```
 
 The app must name an `Application` class in its manifest.

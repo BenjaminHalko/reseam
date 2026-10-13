@@ -15,6 +15,8 @@ dependencies {
     implementation(libs.kotlin.gradle.plugin)
     implementation(libs.kotlinx.serialization.json)
     implementation("org.ow2.asm:asm:9.10")
+    implementation("org.ow2.asm:asm-commons:9.10")
+    implementation("org.jetbrains.kotlin:kotlin-metadata-jvm:${libs.versions.kotlin.get()}")
 }
 
 kotlin {
@@ -56,6 +58,10 @@ gradlePlugin {
         create("extension") {
             id = "app.reseam.extension"
             implementationClass = "app.reseam.gradle.ReseamExtensionPlugin"
+        }
+        create("settings") {
+            id = "app.reseam.settings"
+            implementationClass = "app.reseam.gradle.ReseamSettingsPlugin"
         }
     }
 }

@@ -161,6 +161,8 @@ fn open_settings_test_apk() -> (tempfile::TempDir, ApkFile) {
 }
 
 const SETTINGS_SCHEMA: &str = "assets/reseam/runtime-test-bundle/settings.json";
+const SETTINGS_STRINGS: &str = "assets/reseam/runtime-test-bundle/strings/TestStrings/default.json";
+const RUNTIME_STRINGS: &str = "assets/reseam/runtime/strings/default.json";
 
 fn open_split_test_apk_with(
     base_manifest: &[u8],
@@ -936,8 +938,8 @@ fn same_named_patches_keep_independent_identity_options_dependencies_and_setting
     let schema: serde_json::Value = serde_json::from_slice(&schema).unwrap();
     let sections = schema["sections"].as_array().unwrap();
     assert_eq!(sections.len(), 2);
-    assert_eq!(sections[0]["title"], "First");
-    assert_eq!(sections[1]["title"], "Second");
+    assert_eq!(sections[0]["title"]["name"], "section_first");
+    assert_eq!(sections[1]["title"]["name"], "section_second");
 }
 
 fn apply_fixture(apk: &mut ApkFile, name: &str, id: &str) {
@@ -1806,6 +1808,12 @@ fn settings_pages_merge_selected_contributions_and_keep_nested_ancestors() {
         );
         let child = pages.iter().find(|p| p["id"] == "quality").unwrap();
         assert_eq!(child["parent"], "media");
+        assert_eq!(child["title"]["table"], "TestStrings");
+        assert_eq!(child["title"]["name"], "page_quality");
+        let table = entry(&mut apk, 0, SETTINGS_STRINGS).unwrap();
+        let table: serde_json::Value = serde_json::from_slice(&table).unwrap();
+        assert_eq!(table["page_quality"], "Quality");
+        assert!(entry(&mut apk, 0, RUNTIME_STRINGS).is_some());
         let sections = schema["sections"].as_array().unwrap();
         assert!(sections[0]["page"].is_null());
         assert_eq!(sections[0]["settings"][0]["key"], "root.enabled");

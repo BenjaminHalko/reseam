@@ -14,7 +14,7 @@ description: The words used across these docs.
 
 **Engine**: the part of Reseam that applies a bundle to an APK. It runs in Reseam Manager, the CLI, and the browser patcher.
 
-**Extension**: Java code in a bundle that patches add to the app.
+**Extension**: Kotlin code in a bundle that patches add to the app.
 
 **Gate**: patched code that checks a setting while the app runs.
 

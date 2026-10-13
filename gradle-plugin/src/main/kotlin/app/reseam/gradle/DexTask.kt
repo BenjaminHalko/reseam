@@ -12,7 +12,9 @@ import org.gradle.api.Project
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileCollection
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Classpath
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
@@ -39,6 +41,13 @@ internal abstract class DexTask @Inject constructor(private val exec: ExecOperat
 
     @get:OutputDirectory @get:Optional abstract val globals: DirectoryProperty
 
+    /** Whether no classes at all is fine, as for a stdlib nothing uses. */
+    @get:Input abstract val allowEmpty: Property<Boolean>
+
+    init {
+        allowEmpty.convention(false)
+    }
+
     @TaskAction
     fun run() {
         shippedAars.files.forEach { aar ->
@@ -53,8 +62,9 @@ internal abstract class DexTask @Inject constructor(private val exec: ExecOperat
         val files =
             sources.asFileTree.files.filter { it.extension == "class" } +
                 sources.files.filter { it.extension == "jar" }
-        check(files.isNotEmpty()) { "nothing to dex in ${project.path}" }
         val globalsDir = globals.orNull?.asFile?.also(::recreate)
+        if (files.isEmpty() && allowEmpty.get()) return
+        check(files.isNotEmpty()) { "nothing to dex in ${project.path}" }
         if (globalsDir == null) {
             exec.d8(compiler, libraries, outDir, files)
             return
@@ -79,6 +89,12 @@ internal abstract class DexTask @Inject constructor(private val exec: ExecOperat
         )
     }
 }
+
+internal fun File.classFiles(): Sequence<File> =
+    walkTopDown().filter { it.isFile && it.extension == "class" }
+
+internal fun FileCollection.classFiles(): List<File> =
+    files.filter(File::isDirectory).flatMap { it.classFiles() }
 
 internal fun recreate(dir: File) {
     if (dir.exists() && !dir.deleteRecursively())
