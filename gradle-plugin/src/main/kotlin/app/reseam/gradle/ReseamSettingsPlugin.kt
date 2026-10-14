@@ -77,7 +77,7 @@ internal class ReseamSettingsPlugin : Plugin<Project> {
                 output.set(project.layout.buildDirectory.dir("reseam/dex"))
                 globals.set(project.layout.buildDirectory.dir("reseam/globals"))
             }
-        project.publish(ClassVariant.SETTINGS, device)
+        project.publish(ModuleVariant.SETTINGS, device)
         project.tasks.named("build") { dependsOn(dex) }
     }
 }

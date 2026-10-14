@@ -275,6 +275,12 @@ impl StringValue<'_> {
         self.units().eq(text.encode_utf16())
     }
 
+    /// The text, for strings that are valid UTF-16.
+    pub(crate) fn text(self) -> Result<String> {
+        String::from_utf16(&self.units().collect::<Vec<_>>())
+            .map_err(|_| invalid(0, "string has an unpaired surrogate"))
+    }
+
     /// The identifier hash Hermes stores for each identifier.
     pub(crate) fn identifier_hash(self) -> u32 {
         self.units().fold(0_u32, |hash, unit| {

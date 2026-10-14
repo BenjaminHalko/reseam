@@ -13,7 +13,7 @@ execute {
     }
 
     buildTitle.after {
-        returnValue(call(Badges.append, capture("result")))
+        returnValue(call(Badges.append, result))
     }
 
     configureDownloads.replace {
@@ -28,7 +28,7 @@ execute {
 | On a method | |
 |---|---|
 | `before { }` | at the start |
-| `after { }` | before every return; `capture("result")` is the value being returned |
+| `after { }` | before every return; `result` is the value being returned |
 | `replace { }` | instead of the whole body |
 
 On a [point](7_points.md), `before { }` and `after { }` place code just before or just after that instruction.

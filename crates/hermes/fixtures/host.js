@@ -14,3 +14,18 @@ __d(function (global, require, importDefault, importAll, module, exports, depend
         },
     };
 }, 300, [7]);
+__d(function (global, require, importDefault, importAll, module, exports, dependencyMap) {
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.default = { getTheme: function getTheme() { return "dark"; } };
+    exports.ThemeTypes = { DARK: "dark" };
+}, 301, []);
+__d(function (global, require, importDefault, importAll, module, exports, dependencyMap) {
+    module.exports = {
+        get View() {
+            return function View() {};
+        },
+        get Text() {
+            return function Text() {};
+        },
+    };
+}, 302, []);

@@ -3,26 +3,74 @@
 
 package app.reseam.patch
 
-import app.reseam.patch.native.hermesAlwaysReturn
 import app.reseam.patch.native.hermesFindFunction
+import app.reseam.patch.native.hermesHook
+import app.reseam.patch.native.hermesModuleImports
 import app.reseam.patch.native.hermesVersion
-import app.reseam.patch.native.hermesWrap
-import app.reseam.patch.types.HermesArgument
-import app.reseam.patch.types.HermesConstant
+import app.reseam.patch.types.HermesHookKind
+import app.reseam.patch.types.HermesImport
 import app.reseam.patch.types.HermesModule
 
 /**
  * The base APK's Hermes bytecode in `assets/index.android.bundle`, opened on first use and written
  * when the patch run finishes. Missing bundles, non-Hermes files and unsupported bytecode versions
  * fail the patch. Version 98 is currently supported.
- *
- * Functions and extensions are linked at patch time. Extension initialization runs once before the
- * app's global code, with exports held in a private lexical environment.
  */
 class HermesScope internal constructor() {
     /** Opens the bundle and returns its bytecode version. */
     val version: Int
         get() = hermesVersion().toInt()
+
+    /**
+     * Declares, for the rest of the run, the app modules JavaScript extensions import. An
+     * extension's bare specifiers, such as `react` or `app:screens/Home.tsx`, name app modules;
+     * each resolves to the Metro module declared here when the extension links. Patches whose
+     * extensions import app modules depend on the patch that declares them.
+     *
+     * ```kotlin
+     * val appModules = patch {
+     *     execute {
+     *         hermes.modules {
+     *             module("react", function { name("isValidElement"); paramCount(1) }.module)
+     *             prefix("app:") { path -> function { strings(path); paramCount(7) }.module }
+     *         }
+     *     }
+     * }
+     * ```
+     */
+    fun modules(block: AppModules.() -> Unit) = ActiveRuntime.current.run.appModules.block()
+}
+
+/** The app modules extensions import, by specifier, declared for the rest of the run. */
+class AppModules internal constructor() {
+    private val modules = mutableMapOf<String, MetroModule>()
+    private val prefixes = mutableMapOf<String, (String) -> MetroModule>()
+
+    /** Resolves the import [specifier] to [module]. */
+    fun module(specifier: String, module: MetroModule) {
+        val previous = modules.putIfAbsent(specifier, module)
+        require(previous == null || previous === module) { "$specifier is declared twice" }
+    }
+
+    /**
+     * Resolves imports that start with [prefix], and have no [module] declaration, by the rest of
+     * the specifier.
+     */
+    fun prefix(prefix: String, module: (path: String) -> MetroModule) {
+        val previous = prefixes.putIfAbsent(prefix, module)
+        require(previous == null || previous === module) { "$prefix is declared twice" }
+    }
+
+    internal fun resolve(specifier: String): MetroModule =
+        modules.getOrPut(specifier) {
+            prefixes.entries
+                .firstOrNull { (prefix, _) -> specifier.startsWith(prefix) }
+                ?.let { (prefix, module) -> module(specifier.removePrefix(prefix)) }
+                ?: error(
+                    "No app module is declared for the import $specifier; depend on the patch " +
+                        "that declares the app's modules"
+                )
+        }
 }
 
 /**
@@ -90,18 +138,14 @@ class FunctionTarget internal constructor(debugName: String?, private val query:
             wrapped(label, query.toString()),
         )
 
-    /** Like [wrap], passing [bound] to [export] ahead of `original`. */
-    internal fun wrapBound(export: JsExport, bound: List<HermesArgument>) =
-        hermesWrap(resolved, export.module.source, export.name, bound)
-
-    internal fun returnConstant(value: HermesConstant) = hermesAlwaysReturn(resolved, value)
+    internal fun hook(kind: HermesHookKind, block: JsCodeScope.() -> Unit) =
+        hermesHook(resolved, kind, JsCode(kind).build(block))
 
     /**
-     * The Metro module that defines this function, for passing to [wrap]. React Native bundles
-     * register each source module with Metro; its exports hold the module's functions, and a store
-     * module's `default` export is the store. The module is the one whose factory creates this
-     * function, found when the wrap is made. A function created outside a module, or in several,
-     * fails the patch.
+     * The Metro module that defines this function, for declaring app modules. React Native bundles
+     * register each source module with Metro; its exports hold the module's functions. The module
+     * is the one whose factory creates this function, or this function when it is a factory. A
+     * function created outside a module, or in several, fails the patch.
      */
     val module: MetroModule
         get() = MetroModule(this)
@@ -111,80 +155,81 @@ class FunctionTarget internal constructor(debugName: String?, private val query:
  * A Metro module of the app's bundle, named by a function it defines. See [FunctionTarget.module].
  */
 class MetroModule internal constructor(private val function: FunctionTarget) {
-    internal val argument: HermesArgument
-        get() = HermesArgument.Module(function.resolved)
+    internal val handle: UInt
+        get() = function.resolved
 }
 
 /**
- * Calls [export] as `export(original, ...arguments)` with the function's receiver, returning the
- * export's result. `original` invokes the previous wrap, or the unchanged body for the first wrap,
- * bound to that receiver and closed over the original outer environment. The export may call it
- * with different arguments, skip it or transform its result; exceptions propagate normally.
+ * Runs [block] when the function is entered. Falling off its end calls the function with its
+ * arguments, as [block] assigned them; [JsCodeScope.returnValue] returns early instead.
  *
- * Wraps compose in application order (patch execution order), including exports from different
- * modules. The last wrap runs outermost; the innermost `original` calls the unchanged app body.
- * Lookups continue to match original app functions.
- *
- * The extension links once, when first used. Missing modules and undeclared or non-callable exports
- * fail the patch. Generators, async functions, class constructors, functions using `new.target` or
- * direct `eval`, and unprovable environment chains are refused. Ordinary wrapped functions cannot
- * be called with `new` afterwards. Debug data for edited functions may be dropped.
+ * Hooks compose in application order (patch execution order): a later hook runs around the function
+ * as earlier hooks left it. Lookups continue to match original app functions. Each extension links
+ * once, when a hook first calls it; missing modules and undeclared exports fail the patch.
+ * Generators, async functions, class constructors, functions using `new.target` or direct `eval`,
+ * and unprovable environment chains are refused. Hooked functions cannot be called with `new`
+ * afterwards. Debug data for edited functions may be dropped.
  */
-fun FunctionTarget.wrap(export: JsExport) = wrapBound(export, emptyList())
+fun FunctionTarget.before(block: JsCodeScope.() -> Unit) = hook(HermesHookKind.BEFORE, block)
 
 /**
- * Like [wrap], passing the exports of each of [modules] to [export] ahead of `original`:
- * `export(...modules, original, ...arguments)`. Each module is read through Metro's `__r` whenever
- * the function runs, which initializes it first if the app has not loaded it yet.
- *
- * ```kotlin
- * handlePressSend.wrap(Preview.handlePressSend, receiveMessage.module, getDraft.module)
- * ```
+ * Runs [block] after the function returns; [JsCodeScope.result] is its result, which falling off
+ * the end returns. See [before].
  */
-fun FunctionTarget.wrap(export: JsExport, vararg modules: MetroModule) =
-    wrapBound(export, modules.map { it.argument })
+fun FunctionTarget.after(block: JsCodeScope.() -> Unit) = hook(HermesHookKind.AFTER, block)
 
 /**
- * Replaces the function's body with `return undefined`. Earlier wraps of the function no longer
- * run; later wraps receive the constant body as `original`.
+ * Runs [block] instead of the function; falling off its end returns `undefined`. Earlier hooks no
+ * longer run. See [before].
  */
-fun FunctionTarget.alwaysReturn() = returnConstant(HermesConstant.Undefined)
+fun FunctionTarget.replace(block: JsCodeScope.() -> Unit) = hook(HermesHookKind.REPLACE, block)
+
+/** Replaces the function's body with `return undefined`. */
+fun FunctionTarget.alwaysReturn() = replace { returnUndefined() }
 
 /** Replaces the function's body with `return null`. */
-fun FunctionTarget.alwaysReturnNull() = returnConstant(HermesConstant.Null)
+fun FunctionTarget.alwaysReturnNull() = replace { returnNull() }
 
 /** Replaces the function's body with `return value`. */
-fun FunctionTarget.alwaysReturn(value: Boolean) = returnConstant(HermesConstant.Bool(value))
+fun FunctionTarget.alwaysReturn(value: Boolean) = replace { returnValue(bool(value)) }
 
 /** Replaces the function's body with `return value`. */
-fun FunctionTarget.alwaysReturn(value: Int) = returnConstant(HermesConstant.Int(value))
+fun FunctionTarget.alwaysReturn(value: Int) = replace { returnValue(int(value)) }
 
 /** Replaces the function's body with `return value`. */
-fun FunctionTarget.alwaysReturn(value: String) = returnConstant(HermesConstant.Text(value))
+fun FunctionTarget.alwaysReturn(value: String) = replace { returnValue(string(value)) }
 
 /**
- * A JavaScript extension's artifact name, matching its workspace module: for
- * `apps/example/extensions/features`, use `example-features`. Names contain only ASCII letters,
- * digits, hyphens and underscores; others fail when first used. Sources live in `src/main/js` and
- * assign callable properties to `exports`. Keep export assignments unconditional.
+ * A JavaScript extension of the bundle, named by its workspace module: for
+ * `apps/example/extensions/features`, `example-features`. The Gradle plugin generates one binding
+ * per extension from its entry module's exports; it is never written by hand.
  *
- * ```kotlin
- * object Features : ExtJsModule("example-features") {
- *     val isFeatureEnabled by export()
- * }
- * ```
+ * The extension's sources live in `src/main/js`: the entry module `index.ts`, `index.tsx`,
+ * `index.js` or `index.jsx`, bundled with the modules it imports by relative path. Bare specifiers
+ * name app modules, which [HermesScope.modules] declares; JSX uses the app's `react/jsx-runtime`.
+ * The extension's code first runs when a hook first calls one of its exports.
  */
 open class ExtJsModule(val name: String) {
     internal open val source: HermesModule
-        get() = HermesModule.Bundle(name)
+        get() =
+            HermesModule.Bundle(
+                name,
+                hermesModuleImports(name).map { specifier ->
+                    HermesImport(
+                        specifier,
+                        ActiveRuntime.current.run.appModules.resolve(specifier).handle,
+                    )
+                },
+            )
 
-    /**
-     * Declares a callable property of the extension's exports object, named after the property, or
-     * [name]. Validated on use.
-     */
+    /** Declares a function the extension exports, named after the property, or [name]. */
     fun export(name: String? = null): MemberDelegate<JsExport> =
         MemberDelegate(name) { JsExport(this, it) }
+
+    override fun toString() = name
 }
 
-/** A declared callable JavaScript export; it does not load or execute the module by itself. */
-class JsExport internal constructor(val module: ExtJsModule, val name: String)
+/** A function an extension exports; hooks call it through [JsCodeScope.call]. */
+class JsExport internal constructor(val module: ExtJsModule, val name: String) {
+    override fun toString() = "$module.$name"
+}

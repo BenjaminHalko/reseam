@@ -5,20 +5,22 @@ package app.reseam.patch.settings
 
 import app.reseam.patch.CodeScope
 import app.reseam.patch.FunctionTarget
-import app.reseam.patch.JsExport
+import app.reseam.patch.JsCodeScope
+import app.reseam.patch.JsOtherwise
 import app.reseam.patch.MethodTarget
-import app.reseam.patch.MetroModule
 import app.reseam.patch.Otherwise
 import app.reseam.patch.PointTarget
 import app.reseam.patch.Type
 import app.reseam.patch.after
 import app.reseam.patch.before
 import app.reseam.patch.skipWhen
-import app.reseam.patch.types.HermesArgument
-import app.reseam.patch.types.HermesExportRef
 
 /** Runs `block` in the app when the running bundle's toggle is on. */
 fun CodeScope.whenEnabled(setting: ToggleSetting, block: CodeScope.() -> Unit): Otherwise =
+    whenTrue(valueOf(setting), block)
+
+/** Runs `block` in the app's JavaScript when the running bundle's toggle is on. */
+fun JsCodeScope.whenEnabled(setting: ToggleSetting, block: JsCodeScope.() -> Unit): JsOtherwise =
     whenTrue(valueOf(setting), block)
 
 /**
@@ -69,30 +71,26 @@ class GateScope internal constructor(val setting: ToggleSetting) {
     fun MethodTarget.alwaysReturn(value: String) =
         returnOn(setting, Type.String) { returnValue(string(value)) }
 
-    fun FunctionTarget.wrap(export: JsExport) =
-        wrapBound(
-            AppRuntimeJs.wrapWhen,
-            bound() + HermesArgument.Export(HermesExportRef(export.module.source, export.name)),
-        )
+    fun FunctionTarget.before(block: JsCodeScope.() -> Unit) = beforeOn(setting, block)
 
-    fun FunctionTarget.wrap(export: JsExport, vararg modules: MetroModule) =
-        wrapBound(
-            AppRuntimeJs.wrapWithModulesWhen,
-            bound() +
-                HermesArgument.Export(HermesExportRef(export.module.source, export.name)) +
-                HermesArgument.Int(modules.size) +
-                modules.map { it.argument },
-        )
+    fun FunctionTarget.after(block: JsCodeScope.() -> Unit) = afterOn(setting, block)
 
-    fun FunctionTarget.alwaysReturn() = wrapBound(AppRuntimeJs.skipWhen, bound())
+    /** Runs [block] instead of the function; falling off its end returns `undefined`. */
+    fun FunctionTarget.replace(block: JsCodeScope.() -> Unit) =
+        beforeOn(setting) {
+            block()
+            returnUndefined()
+        }
 
-    fun FunctionTarget.alwaysReturnNull() = wrapBound(AppRuntimeJs.returnNullWhen, bound())
+    fun FunctionTarget.alwaysReturn() = replace { returnUndefined() }
 
-    fun FunctionTarget.alwaysReturn(value: Boolean) = returnValue(HermesArgument.Bool(value))
+    fun FunctionTarget.alwaysReturnNull() = replace { returnNull() }
 
-    fun FunctionTarget.alwaysReturn(value: Int) = returnValue(HermesArgument.Int(value))
+    fun FunctionTarget.alwaysReturn(value: Boolean) = replace { returnValue(bool(value)) }
 
-    fun FunctionTarget.alwaysReturn(value: String) = returnValue(HermesArgument.Text(value))
+    fun FunctionTarget.alwaysReturn(value: Int) = replace { returnValue(int(value)) }
+
+    fun FunctionTarget.alwaysReturn(value: String) = replace { returnValue(string(value)) }
 
     /**
      * Calls the function with a copy of argument [index] whose property at [path] is [value].
@@ -104,26 +102,10 @@ class GateScope internal constructor(val setting: ToggleSetting) {
         require(path.split('.').none(String::isEmpty)) {
             "setArgument needs property names separated by dots, got '$path'"
         }
-        wrapBound(
-            AppRuntimeJs.setArgumentWhen,
-            bound() +
-                listOf(
-                    HermesArgument.Int(index),
-                    HermesArgument.Text(path),
-                    HermesArgument.Bool(value),
-                ),
-        )
+        beforeOn(setting) {
+            param(index).assign(AppRuntimeJs.withProperty(param(index), string(path), bool(value)))
+        }
     }
-
-    private fun FunctionTarget.returnValue(value: HermesArgument) =
-        wrapBound(AppRuntimeJs.returnWhen, bound() + value)
-
-    private fun bound() =
-        listOf(
-            HermesArgument.Text(bundle.name),
-            HermesArgument.Text(setting.key),
-            HermesArgument.Bool(setting.default),
-        )
 }
 
 private fun MethodTarget.beforeOn(setting: ToggleSetting, block: CodeScope.() -> Unit) = before {
@@ -151,4 +133,13 @@ private fun MethodTarget.returnOn(
         "the ${setting.key} gate returns $type, but $descriptor returns $returnType"
     }
     beforeOn(setting, block)
+}
+
+private fun FunctionTarget.beforeOn(setting: ToggleSetting, block: JsCodeScope.() -> Unit) =
+    before {
+        whenEnabled(setting, block)
+    }
+
+private fun FunctionTarget.afterOn(setting: ToggleSetting, block: JsCodeScope.() -> Unit) = after {
+    whenEnabled(setting, block)
 }

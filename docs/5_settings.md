@@ -205,7 +205,7 @@ ui.dialog()
 [Hermes gates](15_hermes.md#gate-on-a-setting) read settings through a React Native module. Add it from your host's `install`, at the hook on the app's package list:
 
 ```kotlin
-getPackages.after { call(ReseamReactPackage.addTo, capture("result")) }
+getPackages.after { call(ReseamReactPackage.addTo, result) }
 ```
 
 It is added once, however many bundles call it.

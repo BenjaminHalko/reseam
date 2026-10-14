@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use reseam_apk::Compression;
 use reseam_hermes::{
-    Argument, Constant, Editor, Edits, FunctionId, FunctionIndex, HermesFile, HermesImage, ModuleId,
+    Code, Editor, Edits, FunctionId, FunctionIndex, HermesFile, HermesImage, HookKind, Import,
+    ModuleId,
 };
 use reseam_storage::Bytes;
 
@@ -82,23 +83,18 @@ impl PatchContext<'_> {
             .find_function(&session.image.file(), name, strings, parameters)?)
     }
 
-    /// Links a bundle's JavaScript extension compiled to Hermes bytecode.
-    pub(crate) fn hermes_link(&mut self, module: &Path) -> Result<ModuleId> {
-        self.hermes_link_source(ModuleSource::File(module.to_owned()), |_| {
-            let file = std::fs::File::open(module).map_err(|e| {
-                PatcherError::Bundle(format!("Hermes extension {}: {e}", module.display()))
-            })?;
-            // SAFETY: bundle payloads are validated immutable snapshots retained for the run.
-            Ok(Bytes::from_mmap(Arc::new(unsafe {
-                reseam_storage::map_file(&file)?
-            })))
+    /// Links a bundle's JavaScript extension compiled to Hermes bytecode, with every app module
+    /// it imports resolved.
+    pub(crate) fn hermes_link(&mut self, module: &Path, imports: &[Import]) -> Result<ModuleId> {
+        self.hermes_link_source(ModuleSource::File(module.to_owned()), imports, |_| {
+            extension_bytes(module)
         })
     }
 
     /// Links the app runtime's JavaScript, compiled for the app's bytecode version.
     #[cfg(feature = "bridge")]
     pub(crate) fn hermes_link_app_runtime(&mut self) -> Result<ModuleId> {
-        self.hermes_link_source(ModuleSource::AppRuntime, |version| {
+        self.hermes_link_source(ModuleSource::AppRuntime, &[], |version| {
             crate::app_runtime::hermes(version)
                 .map(Bytes::from_slice)
                 .ok_or_else(|| {
@@ -112,6 +108,7 @@ impl PatchContext<'_> {
     fn hermes_link_source(
         &mut self,
         source: ModuleSource,
+        imports: &[Import],
         bytes: impl FnOnce(u32) -> Result<Bytes>,
     ) -> Result<ModuleId> {
         let session = self.hermes_session()?;
@@ -120,29 +117,19 @@ impl PatchContext<'_> {
         }
         let module = bytes(session.image.file().version())?;
         let module_file = HermesFile::parse(&module)?;
-        let id = session.edit(|editor, _| Ok(editor.link(&module_file)?))?;
+        let id = session.edit(|editor, index| Ok(editor.link(index, &module_file, imports)?))?;
         session.modules.insert(source, id);
         Ok(id)
     }
 
-    pub(crate) fn hermes_wrap(
+    pub(crate) fn hermes_hook(
         &mut self,
         function: FunctionId,
-        module: ModuleId,
-        export: &str,
-        bound: &[Argument],
+        kind: HookKind,
+        code: &Code,
     ) -> Result<()> {
         self.hermes_session()?
-            .edit(|editor, index| Ok(editor.wrap(index, function, module, export, bound)?))
-    }
-
-    pub(crate) fn hermes_always_return(
-        &mut self,
-        function: FunctionId,
-        value: &Constant,
-    ) -> Result<()> {
-        self.hermes_session()?
-            .edit(|editor, _| Ok(editor.always_return(function, value)?))
+            .edit(|editor, index| Ok(editor.hook(index, function, kind, code)?))
     }
 
     /// Writes the bundle back when a patch changed it.
@@ -164,4 +151,19 @@ impl PatchContext<'_> {
             .inject_file_spooled(0, BUNDLE, file, Compression::Stored)?;
         Ok(())
     }
+}
+
+/// The app modules a bundle's JavaScript extension imports, by specifier.
+pub(crate) fn hermes_imports(module: &Path) -> Result<Vec<String>> {
+    let bytes = extension_bytes(module)?;
+    Ok(reseam_hermes::imports(&HermesFile::parse(&bytes)?)?)
+}
+
+fn extension_bytes(module: &Path) -> Result<Bytes> {
+    let file = std::fs::File::open(module)
+        .map_err(|e| PatcherError::Bundle(format!("Hermes extension {}: {e}", module.display())))?;
+    // SAFETY: bundle payloads are validated immutable snapshots retained for the run.
+    Ok(Bytes::from_mmap(Arc::new(unsafe {
+        reseam_storage::map_file(&file)?
+    })))
 }

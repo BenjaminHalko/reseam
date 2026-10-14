@@ -211,7 +211,7 @@ fn main() {
         .any(|prefix| line.starts_with(prefix))
         {
             let args = arguments(line);
-            if line == "PRIVATE_BUILTIN(apply)" || line == "PRIVATE_BUILTIN(applyArguments)" {
+            if line == "PRIVATE_BUILTIN(apply)" {
                 writeln!(
                     output,
                     "pub(crate) const BUILTIN_{}: u8 = {index};",

@@ -10,11 +10,16 @@ import org.gradle.api.initialization.Settings
 /** An app's or a shared folder's modules, by project path. */
 internal class Folder(
     val name: String,
+    val dir: File,
     val patch: String?,
     val settings: String?,
     val extensions: List<Extension>,
 ) {
     fun paths() = listOfNotNull(patch, settings) + extensions.map { it.path }
+
+    /** Whether the folder's extensions are TypeScript checked; see [registerTypecheck]. */
+    val typed: Boolean
+        get() = File(dir, "package.json").isFile
 
     fun artifact(path: String): String =
         when (path) {
@@ -36,6 +41,7 @@ internal fun Settings.appFolder(app: File): Folder {
     val path = ":apps:${app.name}"
     return Folder(
         app.name,
+        app,
         File(app, "patch").takeIf { it.isDirectory }?.let { include("$path:patch", it) },
         File(app, "settings").takeIf { it.isDirectory }?.let { include("$path:settings", it) },
         directories(File(app, "extensions")).map {
@@ -61,6 +67,7 @@ internal fun Settings.sharedFolder(shared: File): Folder {
         else null
     return Folder(
         shared.name,
+        shared,
         patch?.let { include("$path:patch", it) },
         File(shared, "settings").takeIf { it.isDirectory }?.let { include("$path:settings", it) },
         listOfNotNull(extension),

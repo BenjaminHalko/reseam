@@ -1,59 +1,55 @@
 ---
-description: Link JavaScript extensions into a Hermes bundle and wrap the app's functions.
+description: Hook the app's JavaScript functions in a Hermes bundle and call your TypeScript from the hooks.
 ---
 
 # Hermes JavaScript
 
-React Native apps often ship JavaScript as Hermes bytecode in `assets/index.android.bundle`. Reseam opens that bundle in the base APK when a patch first uses it, links your JavaScript into it, and writes the patched bundle stored, without ZIP compression, when the run finishes. A bundle no patch changed is left as it was.
+React Native apps often ship JavaScript as Hermes bytecode in `assets/index.android.bundle`. Reseam opens that bundle in the base APK when a patch first uses it, links your extensions into it, and writes the patched bundle stored, without ZIP compression, when the run finishes. A bundle no patch changed is left as it was.
 
 Version 98 is supported. A missing bundle, another file format, or another bytecode version fails the patch.
 
+You hook the app's functions the way you [change methods](8_changing_code.md), and call your extension's functions from the hooks.
+
 ## Write an extension
 
-Put JavaScript in an extension module:
+Put the code in its own extension module, with one entry module:
 
 ```text
 apps/example/extensions/features/
-  src/main/js/index.js
+  src/main/js/index.ts
 ```
 
-Assign function expressions to `exports` at the top level:
+The entry is `index.ts`, `index.tsx`, `index.js` or `index.jsx`. The build bundles it with the modules it imports by relative path and compiles it with the pinned Hermes compiler. Kotlin and JavaScript extensions need separate modules.
 
-```javascript
-exports.isFeatureEnabled = function (original, name) {
-    return true;
-};
-```
+Export functions that take values and return values:
 
-The build compiles every `.js` file in `src/main/js`, in relative path order, inside one strict function with its own `exports` object. It fetches the pinned compiler for each supported Hermes version and puts the compiled modules in the bundle. Kotlin and JavaScript extensions need separate modules.
-
-Keep export assignments unconditional and use literal property names. Reseam checks that a declared export is a callable property of the returned object. Dynamic declarations it cannot establish fail on use.
-
-The module initializes once before the app's global code. Strings, regexps, object and array literals, bigints, and closures can be used normally. App globals may not exist during initialization. Exports stay in a private lexical environment; they do not add properties to the app's global object.
-
-## Find and wrap
-
-Declare the module and the exports a patch uses, named after the app functions they wrap:
-
-```kotlin
-object Features : ExtJsModule("example-features") {
-    val isFeatureEnabled by export()
+```typescript
+export function withFeature(flags: Record<string, boolean>, name: string) {
+    return { ...flags, [name]: true };
 }
 ```
 
-The artifact name follows the workspace convention: `<app>-<extension>`, or `<name>` for a shared module. Names contain only ASCII letters, digits, hyphens and underscores.
+The build generates a binding for each extension from its exports. A patch module in `apps/example` gets `app.reseam.example.bindings.Features`, with one property per export.
 
-Declare the app function as a target, like a DEX `method { }`, and wrap it in `execute`:
+The extension first runs when a hook first calls it. Its exports stay private; they do not add properties to the app's global object.
+
+## Find and hook
+
+Declare the app function as a target, like a DEX `method { }`, and hook it in `execute`:
 
 ```kotlin
+import app.reseam.example.bindings.Features
+
 val allFeatures = patch("All features") {
     execute {
-        isFeatureEnabled.wrap(Features.isFeatureEnabled)
+        featureFlags.after {
+            returnValue(Features.withFeature(result, string("search")))
+        }
     }
 }
 
-private val isFeatureEnabled = function {
-    name("isFeatureEnabled")
+private val featureFlags = function {
+    name("getFeatureFlags")
     strings("FEATURE_FLAGS")
     paramCount(1)
 }
@@ -61,58 +57,56 @@ private val isFeatureEnabled = function {
 
 Every constraint must match. `name` is exact and case-sensitive; `strings` matches instruction references, including property names; `paramCount` excludes `this`. Zero or several matches fail the patch. A target resolves when a patch first uses it.
 
-`wrap` calls your export as `export(original, ...arguments)` with the function's receiver, and returns your export's result. `original` calls the previous wrap, or the unchanged body for the first wrap, with the original captured environment. It is bound to the receiver, so `original(...args)` preserves `this` too.
+| On a function | |
+|---|---|
+| `before { }` | at the start; falling off the end calls the function with its arguments, as assigned |
+| `after { }` | after it returns; `result` is the returned value |
+| `replace { }` | instead of the function; falling off the end returns `undefined` |
 
-Repeated wraps compose in the order patches apply them. The last wrap runs first and receives the previous wrap as `original`; the innermost `original` calls the unchanged app body. Exports from different modules can wrap the same function. Lookups continue to match the original app functions.
+| | |
+|---|---|
+| `thisObject`, `param(i)`, `result` | the receiver, the arguments, and the returned value |
+| `int(1)`, `bool(true)`, `string("x")`, `nullValue`, `undefinedValue` | constants |
+| `Features.withFeature(args)` | call an export and use its result |
+| `value.assign(v)` | overwrite an argument, the result, or a call's result |
+
+Branches and returns work as for methods; branches test truthiness, `== null` and strict equality. The [reference](reference.md#hermes) lists everything.
+
+Hooks compose in the order patches apply them: a later hook runs around the function as earlier hooks left it, and `replace` stops earlier hooks from running. Lookups still match the original app functions.
+
+Generators, async functions, class constructors, functions using `new.target` or direct `eval`, and environment chains Reseam cannot establish fail explicitly. A hooked function cannot be called with `new` afterwards. Edited functions may lose their debug information.
 
 ## Use the app's modules
 
-An export often needs app functions besides the one it wraps: a store to read, or an action to dispatch. React Native bundles keep their source modules in Metro, the bundle's module system. Name a function a module defines, and pass that module to `wrap`:
+React Native bundles keep their source modules in Metro, the bundle's module system. Your extension imports them with bare specifiers:
+
+```typescript
+import UserStore from "app:stores/UserStore.tsx";
+import { cloneElement } from "react";
+```
+
+One patch declares which Metro module each specifier means, for the whole run. Patches whose extensions import app modules depend on it:
 
 ```kotlin
-handlePressSend.wrap(Preview.handlePressSend, getDraft.module, receiveMessage.module)
-
-private val getDraft = function {
-    name("getDraft")
-    strings("_drafts")
-    paramCount(2)
+val appModules = patch {
+    execute {
+        hermes.modules {
+            module("react", function { name("isValidElement"); paramCount(1) }.module)
+            prefix("app:") { path -> function { strings(path); paramCount(7) }.module }
+        }
+    }
 }
 ```
 
-The export receives each module's exports ahead of `original`:
+`FunctionTarget.module` is the Metro module whose factory creates the function, or the function itself when it is a factory. A function created outside a module, or in several, fails the patch. JSX compiles to the app's `react/jsx-runtime`, so declare it when you use JSX.
 
-```javascript
-exports.handlePressSend = function (drafts, messages, original, ...args) {
-    const text = drafts.default.getDraft(channelId, 0);
-    // ...
-    return original(...args);
-};
-```
+Each import is read through Metro the first time your extension uses it, so an extension that runs early in the app's startup never sees a half-initialized module.
 
-A module is the one whose factory creates the function, found when the wrap is made; a function created outside a module, or in several, fails the patch. The exports are read through Metro's `__r` each time the wrapped function runs, which loads the module first if the app has not yet. A module's `default` export holds what its source exports by default, such as a store.
+## Type checking
 
-## Before, after, replace
+An app folder with a `package.json` is type checked before its extensions are bundled, as `typecheck-<app>`. `package.json` pins the type packages your extensions use as `devDependencies`, `package-lock.json` holds their integrity, and `tsconfig.json` configures the check. Only the packages' declaration files are installed, into the folder's `node_modules`.
 
-These are JavaScript around the same primitive:
-
-```javascript
-exports.before = function (original, ...args) {
-    recordRequest(args);
-    return original(...args);
-};
-
-exports.after = function (original, ...args) {
-    return adjustResult(original(...args));
-};
-
-exports.replace = function (original, ...args) {
-    return replacementValue(args);
-};
-```
-
-An export can change arguments, call `original` several times, skip it, or catch exceptions from it. Exceptions it does not catch propagate to the app's caller.
-
-Generators, async functions, class constructors, functions using `new.target` or direct `eval`, and environment chains Reseam cannot establish fail explicitly. An ordinary wrapped function cannot be called with `new` afterwards. Edited functions may lose their debug information.
+A Kotlin extension in the same app that defines React Native modules gets declarations for them. A class with `@ReactModule(name = ...)` and `@ReactMethod` methods becomes a typed member of `NativeModules` from `react-native`, in the extension's `build/reseam/types`. Include `extensions/*/build/reseam/types` in `tsconfig.json`, and a call with a wrong method name or argument count fails the check.
 
 ## Gate on a setting
 
@@ -123,11 +117,9 @@ Generators, async functions, class constructors, functions using `new.target` or
 ```kotlin
 gate(AppSettings.allFeatures) {
     isStaff.alwaysReturn(true)
-    isFeatureEnabled.wrap(Features.isFeatureEnabled)
+    featureFlags.after { returnValue(Features.withFeature(result, string("search"))) }
     renderRow.setArgument(0, "options.animate", false)
 }
 ```
 
-While the toggle is off, the unchanged function runs, so an export never checks settings itself. `setArgument(index, path, value)` calls the function with one property of an argument replaced; the function receives copies of the objects along the path. Each toggle is read once per process through the [app runtime](5_settings.md#react-native-apps), whose React Native package your settings host adds to the app.
-
-See the [reference](reference.md#hermes) for the authoring API.
+While the toggle is off, the unchanged function runs, so your extension never checks settings itself. `setArgument(index, path, value)` calls the function with one property of an argument replaced; the function receives copies of the objects along the path. Each toggle is read once per process through the [app runtime](5_settings.md#react-native-apps), whose React Native package your settings host adds to the app.

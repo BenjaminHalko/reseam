@@ -6,18 +6,52 @@ use std::collections::BTreeMap;
 use crate::assemble::{assemble, encode};
 use crate::edit::{EditedFunction, Editor, FunctionBody};
 use crate::error::{HermesError, Result, invalid};
+use crate::literal::{Literal, MAX_RUN, read_literals};
+use crate::metro::MetroModuleId;
 use crate::model::{
     Field, FunctionFlags, FunctionHeader, FunctionKind, Prohibit, STATIC_BUILTINS, Section,
     StringId, StringKind,
 };
 use crate::opcode::{IdKind, Instruction, Op};
-use crate::parse::{read_u32, slice};
-use crate::{FunctionId, HermesFile};
+use crate::parse::read_u32;
+use crate::{FunctionId, FunctionIndex, HermesFile};
 
 /// Identity of a module linked into this editor. Its exports remain in a
 /// private environment and are initialized before the app's global code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModuleId(pub(crate) u32);
+
+/// An app module a linked module imports: its specifier, and an app function the Metro module's
+/// factory creates, or the factory itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Import {
+    pub specifier: String,
+    pub function: FunctionId,
+}
+
+/// A linked module: its global function, what each import resolves to, and its exports.
+pub(crate) struct LinkedModule {
+    pub global: FunctionId,
+    pub imports: Vec<LinkedImport>,
+    pub exports: Vec<StringId>,
+}
+
+/// An import as `link` receives it: `{ id, esModule, keys }` under the specifier, enough to read
+/// the Metro module lazily, the first time the module's exports are read.
+pub(crate) struct LinkedImport {
+    pub specifier: StringId,
+    pub id: MetroModuleId,
+    pub es_module: bool,
+    pub keys: Vec<StringId>,
+}
+
+/// The property names of a linked module's interface and of each import record.
+pub(crate) struct LinkNames {
+    pub link: StringId,
+    pub id: StringId,
+    pub es_module: StringId,
+    pub keys: StringId,
+}
 
 /// Where a linked module's IDs start in the merged file, by kind.
 struct Bases {
@@ -30,21 +64,37 @@ struct Bases {
 
 impl Editor<'_> {
     /// Links a compiled v98 JavaScript module and returns its stable identity.
-    /// The module must evaluate to an exports object and keep declarations in
-    /// its own lexical scope (normally an IIFE). CJS segments, global variable
-    /// declarations and incompatible static-builtin assumptions are refused.
-    /// Every function, string, bigint, regexp, literal and shape reference is
-    /// remapped. Module debug information is dropped; exceptions are retained.
-    /// The shared module initializer is assembled once when the file is written.
-    pub fn link(&mut self, module: &HermesFile<'_>) -> Result<ModuleId> {
-        self.transaction(|editor| editor.link_module(module))
+    /// The module evaluates to `{ imports, link }` and keeps declarations in its
+    /// own lexical scope (normally an IIFE); see [`imports`](crate::imports).
+    /// `imports` resolves each declared specifier, exactly once. Before the
+    /// app's global code runs, `link` is called with an object mapping each
+    /// specifier to its Metro module ID, and returns the exports object; its
+    /// exports are the keys every return path of `link` declares. CJS segments,
+    /// global variable declarations and incompatible static-builtin
+    /// assumptions are refused. Every function, string, bigint, regexp, literal
+    /// and shape reference is remapped. Module debug information is dropped;
+    /// exceptions are retained. The shared module initializer is assembled
+    /// once when the file is written.
+    pub fn link(
+        &mut self,
+        index: &FunctionIndex,
+        module: &HermesFile<'_>,
+        imports: &[Import],
+    ) -> Result<ModuleId> {
+        index.check(&self.file)?;
+        self.transaction(|editor| editor.link_module(index, module, imports))
     }
 
     #[expect(
         clippy::too_many_lines,
         reason = "linking visits each versioned file segment in order"
     )]
-    fn link_module(&mut self, module: &HermesFile<'_>) -> Result<ModuleId> {
+    fn link_module(
+        &mut self,
+        index: &FunctionIndex,
+        module: &HermesFile<'_>,
+        imports: &[Import],
+    ) -> Result<ModuleId> {
         if module.field(Field::CjsModuleCount) != 0 || module.field(Field::SegmentId) != 0 {
             return Err(HermesError::Unsupported(
                 "extensions must be standalone execution bytecode; CommonJS segments are unsupported".into(),
@@ -64,6 +114,36 @@ impl Editor<'_> {
             return Err(HermesError::Unsupported(
                 "extension declares globals; compile an IIFE returning exports".into(),
             ));
+        }
+        let interface = crate::interface::interface(module)?;
+        if let Some(missing) = interface
+            .imports
+            .iter()
+            .find(|specifier| imports.iter().all(|import| &import.specifier != *specifier))
+        {
+            return Err(HermesError::Unsupported(format!(
+                "module imports {missing:?}, which is not resolved"
+            )));
+        }
+        let mut resolved = Vec::with_capacity(imports.len());
+        for (position, import) in imports.iter().enumerate() {
+            if !interface.imports.contains(&import.specifier)
+                || imports[..position]
+                    .iter()
+                    .any(|other| other.specifier == import.specifier)
+            {
+                return Err(HermesError::Unsupported(format!(
+                    "{:?} is resolved but not imported once by the module",
+                    import.specifier
+                )));
+            }
+            let (id, shape) = self.metro_shape(index, import.function)?;
+            resolved.push(LinkedImport {
+                specifier: self.intern(&import.specifier, StringKind::String)?,
+                id,
+                es_module: shape.es_module,
+                keys: shape.keys.into_iter().collect(),
+            });
         }
         let mut strings = Vec::with_capacity(module.string_count() as usize);
         let mut id = 0;
@@ -169,16 +249,21 @@ impl Editor<'_> {
             .checked_add(module.field(Field::StringSwitchCount))
             .ok_or_else(|| invalid(0, "too many string switches"))?;
         let module_id = ModuleId(self.edits.modules.len() as u32);
-        self.edits
-            .modules
-            .push(FunctionId(bases.function + module.global_function().0));
-        let exports = crate::exports::exports(module)?;
-        self.edits.module_exports.push(
-            exports
+        self.edits.link_names = Some(LinkNames {
+            link: self.intern("link", StringKind::String)?,
+            id: self.intern("id", StringKind::String)?,
+            es_module: self.intern("esModule", StringKind::String)?,
+            keys: self.intern("keys", StringKind::String)?,
+        });
+        self.edits.modules.push(LinkedModule {
+            global: FunctionId(bases.function + module.global_function().0),
+            imports: resolved,
+            exports: interface
+                .exports
                 .into_iter()
                 .map(|id| StringId(strings[id.0 as usize]))
                 .collect(),
-        );
+        });
         self.refresh_bootstrap()?;
         Ok(module_id)
     }
@@ -206,10 +291,55 @@ impl Editor<'_> {
             Instruction::new(Op::LoadConstUndefined, &[1]),
             Instruction::new(Op::LoadParam, &[2, 0]),
         ];
-        for (slot, function) in self.edits.modules.iter().enumerate() {
+        let names = self
+            .edits
+            .link_names
+            .as_ref()
+            .expect("linking a module names its interface");
+        let string = |register: u64, id: StringId| {
+            Instruction::new(Op::LoadConstStringLongIndex, &[register, u64::from(id.0)])
+        };
+        for (slot, module) in self.edits.modules.iter().enumerate() {
             code.extend([
-                Instruction::new(Op::CreateClosureLongIndex, &[3, 1, u64::from(function.0)]),
+                Instruction::new(
+                    Op::CreateClosureLongIndex,
+                    &[3, 1, u64::from(module.global.0)],
+                ),
                 Instruction::new(Op::Call1, &[3, 3, 1]),
+                string(4, names.link),
+                Instruction::new(Op::GetByVal, &[5, 3, 4]),
+                Instruction::new(Op::NewObject, &[6]),
+            ]);
+            for import in &module.imports {
+                code.extend([
+                    Instruction::new(Op::NewObject, &[7]),
+                    Instruction::new(Op::LoadConstInt, &[8, u64::from(import.id.0)]),
+                    string(9, names.id),
+                    Instruction::new(Op::DefineOwnByVal, &[7, 8, 9, 1]),
+                    if import.es_module {
+                        Instruction::new(Op::LoadConstTrue, &[8])
+                    } else {
+                        Instruction::new(Op::LoadConstFalse, &[8])
+                    },
+                    string(9, names.es_module),
+                    Instruction::new(Op::DefineOwnByVal, &[7, 8, 9, 1]),
+                    Instruction::new(Op::NewArray, &[8, 0]),
+                ]);
+                for (position, key) in import.keys.iter().enumerate() {
+                    code.extend([
+                        string(9, *key),
+                        Instruction::new(Op::DefineOwnByIndexL, &[8, 9, position as u64]),
+                    ]);
+                }
+                code.extend([
+                    string(9, names.keys),
+                    Instruction::new(Op::DefineOwnByVal, &[7, 8, 9, 1]),
+                    string(9, import.specifier),
+                    Instruction::new(Op::DefineOwnByVal, &[6, 7, 9, 1]),
+                ]);
+            }
+            code.extend([
+                Instruction::new(Op::Call2, &[3, 5, 3, 6]),
                 Instruction::new(Op::StoreToEnvironmentL, &[0, slot as u64, 3]),
             ]);
         }
@@ -275,52 +405,6 @@ fn checked_id(value: u64, count: u32, base: u32) -> Result<u32> {
     }
     base.checked_add(value as u32)
         .ok_or_else(|| invalid(0, "linked ID overflow"))
-}
-
-/// The value type of a run in a literal buffer (`SerializedLiteralGenerator` tags).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Literal {
-    Null,
-    True,
-    False,
-    Number,
-    LongString,
-    ShortString,
-    Undefined,
-    Integer,
-}
-
-impl Literal {
-    const MASK: u8 = 0x70;
-    /// Set when the run length continues into a second byte.
-    const LONG_RUN: u8 = 0x80;
-    const LENGTH: u8 = 0x0f;
-
-    fn decode(tag: u8) -> Self {
-        match (tag & Self::MASK) >> 4 {
-            0 => Self::Null,
-            1 => Self::True,
-            2 => Self::False,
-            3 => Self::Number,
-            4 => Self::LongString,
-            5 => Self::ShortString,
-            6 => Self::Undefined,
-            _ => Self::Integer,
-        }
-    }
-
-    const fn tag(self) -> u8 {
-        (self as u8) << 4
-    }
-
-    const fn size(self) -> usize {
-        match self {
-            Self::Null | Self::True | Self::False | Self::Undefined => 0,
-            Self::ShortString => 2,
-            Self::LongString | Self::Integer => 4,
-            Self::Number => 8,
-        }
-    }
 }
 
 /// How many literals an instruction reads from the value buffer: an array's
@@ -405,57 +489,6 @@ impl<'a> Literals<'a> {
     }
 }
 
-/// The longest run a tag and its second length byte can describe.
-const MAX_RUN: usize = 0xfff;
-
-/// One literal of a buffer: its kind and its encoded value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LiteralValue<'a> {
-    kind: Literal,
-    bytes: &'a [u8],
-}
-
-impl LiteralValue<'_> {
-    fn string_id(&self) -> Result<u32> {
-        match self.kind {
-            Literal::ShortString => Ok(u32::from(u16::from_le_bytes([
-                self.bytes[0],
-                self.bytes[1],
-            ]))),
-            Literal::LongString => read_u32(self.bytes, 0),
-            _ => Err(invalid(0, "literal is not a string")),
-        }
-    }
-}
-
-/// Reads `count` literals from `offset` the way the runtime does: run by run,
-/// stopping inside a run once `count` literals are read.
-fn read_literals(source: &[u8], offset: usize, count: usize) -> Result<Vec<LiteralValue<'_>>> {
-    let mut literals = Vec::with_capacity(count);
-    let mut cursor = offset;
-    while literals.len() < count {
-        let tag = slice(source, cursor, 1)?[0];
-        cursor += 1;
-        let mut length = usize::from(tag & Literal::LENGTH);
-        if tag & Literal::LONG_RUN != 0 {
-            length = length << 8 | usize::from(slice(source, cursor, 1)?[0]);
-            cursor += 1;
-        }
-        if length == 0 {
-            return Err(invalid(cursor, "empty literal run"));
-        }
-        let kind = Literal::decode(tag);
-        for _ in 0..length.min(count - literals.len()) {
-            literals.push(LiteralValue {
-                kind,
-                bytes: slice(source, cursor, kind.size())?,
-            });
-            cursor += kind.size();
-        }
-    }
-    Ok(literals)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -522,8 +555,11 @@ mod tests {
         .expect("module fixture parses");
         let module_file = module.file();
         let host_functions = host.file().function_count();
+        let index = FunctionIndex::build(&host.file()).expect("host indexes");
         let mut editor = Editor::new(host.file());
-        editor.link(&module_file).expect("module links");
+        editor
+            .link(&index, &module_file, &[])
+            .expect("module links");
         let mut output = Vec::new();
         editor.write(&mut output).expect("linked file writes");
         let linked = HermesImage::parse(Bytes::from_vec(output)).expect("linked file parses");

@@ -52,14 +52,17 @@ See [Hermes JavaScript](15_hermes.md) for extension sources and examples. Target
 | `HermesFunctionQuery.name(value)` | Exact function name. |
 | `HermesFunctionQuery.strings(vararg values)` | All strings must be referenced by instructions, including property names. |
 | `HermesFunctionQuery.paramCount(count)` | Declared JavaScript parameters, excluding `this`; nonnegative. |
-| `FunctionTarget.wrap(export: JsExport)` | Calls `export(original, ...arguments)` with the same receiver and returns its result. `original` is receiver-bound and retains the unchanged body and captured environment. |
-| `FunctionTarget.module` | The Metro module whose factory creates the function. Functions created outside a module, or in several, fail when the wrap is made. |
-| `FunctionTarget.wrap(export: JsExport, vararg modules: MetroModule)` | Calls `export(...modules, original, ...arguments)`, each module being its exports, read through Metro's `__r` on every call. |
-| `FunctionTarget.alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / String)` | Replaces the body with a constant result. Earlier wraps no longer run; later wraps receive it as `original`. |
-| `ExtJsModule(name)` | Declares an extension artifact, such as `example-features`. |
-| `ExtJsModule.export(name = null)` | Property delegate for a callable property of its exports object, named after the property unless `name` is given. Validated on use. |
+| `HermesScope.modules { AppModules }` | Declares, for the rest of the run, the app modules extensions import. `module(specifier, MetroModule)` names one; `prefix(prefix) { path -> MetroModule }` resolves every specifier starting with `prefix`. |
+| `FunctionTarget.module` | The Metro module whose factory creates the function, or the function when it is a factory. Functions created outside a module, or in several, fail. |
+| `FunctionTarget.before { JsCodeScope }` | Runs on entry; falling off the end calls the function with its arguments, as assigned. |
+| `FunctionTarget.after { JsCodeScope }` | Runs after the function returns; `result` is the returned value, which falling off the end returns. |
+| `FunctionTarget.replace { JsCodeScope }` | Runs instead of the function; falling off the end returns `undefined`. Earlier hooks no longer run. |
+| `FunctionTarget.alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / String)` | Replaces the body with a constant result. |
+| `ExtJsModule(name)` | An extension of the bundle, such as `example-features`. The Gradle plugin generates one per extension, `app.reseam.<folder>.bindings.<Extension>`, with a property per export. |
 
-Generators, async functions, class constructors, `new.target`, direct `eval` and unprovable environment chains fail explicitly. Repeated wraps compose in patch order. Wrapped ordinary functions cannot be constructed with `new`. The module links once and initializes before the app's global code. Exports are private; edited functions may lose debug data.
+`JsCodeScope`: `thisObject`, `param(i)`, `result` (in `after`), `int`, `bool`, `string`, `nullValue`, `undefinedValue`, `call(JsExport, args)` and `JsExport(args)` (calls with `this` undefined), `whenTrue`, `whenFalse`, `whenNull`, `whenNotNull`, `whenEqual`, `whenNotEqual` (each returns `JsOtherwise` with `otherwise { }`), `returnValue`, `returnUndefined`, `returnNull`, `returnTrue`, `returnFalse`. `JsValue.assign(value)` overwrites a parameter, the result, or an earlier call's result.
+
+Generators, async functions, class constructors, `new.target`, direct `eval` and unprovable environment chains fail explicitly. Hooks compose in patch order, each running around the function as earlier hooks left it. Hooked functions cannot be constructed with `new`. An extension links once and first runs when a hook first calls it. Exports are private; edited functions may lose debug data.
 
 ### Options
 
@@ -125,7 +128,7 @@ Generators, async functions, class constructors, `new.target`, direct `eval` and
 | Symbol | Description |
 |---|---|
 | `MethodTarget.before { CodeScope }` | Emit at entry. |
-| `MethodTarget.after { CodeScope }` | Emit before every return; `capture("result")` is the return value. Referenced parameters and receiver are saved at entry in dedicated locals. |
+| `MethodTarget.after { CodeScope }` | Emit before every return; `result` is the return value. Referenced parameters and receiver are saved at entry in dedicated locals. |
 | `MethodTarget.replace { CodeScope }` | Replace the body. |
 | `appEntry { AppEntryScope }` | Emit into code that runs once at process start, first in `onCreate()` of the `Application` the final manifest names. `AppEntryScope` is a `CodeScope` whose `application` is the `Application`; it has no `thisObject`. Fails when the manifest names no `Application`. |
 | `PointTarget.before { }`, `.after { }` | Emit around the instruction. `before` code runs on every path into the instruction, branches to it included; `after` code runs only when the instruction falls through. Repeated emissions at one point stack in emission order. `after` fails on a return, `throw` or `goto`, since nothing after it runs. |
@@ -133,7 +136,7 @@ Generators, async functions, class constructors, `new.target`, direct `eval` and
 | `MethodTarget.alwaysReturn()`, `(Boolean)`, `(Int)`, `(Long)`, `(String)`, `alwaysReturnNull()` | Replace the body with a constant return. |
 | `MethodTarget.replaceAllStrings(old, new)`, `replaceAllLiterals(old, new)` | Rewrite constants; returns the count. |
 
-`CodeScope`: `thisObject`, `param(i)`, `paramOfType(type)`, `lastParam`, `capture(name)`, `local(slot)`, `int`, `long`, `bool`, `string`, `nullObject`, `enumValue(type, name)` (a constant by its field name; see `ClassTarget.enumConstant` for obfuscated enums), `staticField(FieldTarget | FieldRef)`, `setStatic(FieldTarget | FieldRef, value)`, `newInstance(type, ctorProto = "()V", vararg args)`, `call(ExtMethod | MethodTarget, args)` (fails when the extension method does not exist or the argument count does not match), `ExtMethod(args)` (the same as `call` for a static extension method), `callStatic(owner, name, proto, args)`, `whenTrue`, `whenFalse`, `whenNull`, `whenNotNull`, `whenEqual`, `whenNotEqual`, `whenInstanceOf(value, type)` (each returns `Otherwise` with `otherwise { }`), `returnVoid`, `returnValue`, `returnTrue`, `returnFalse`, `returnNull`.
+`CodeScope`: `thisObject`, `param(i)`, `paramOfType(type)`, `lastParam`, `result` (in a method's `after`), `capture(name)` (a `captureAs` value), `local(slot)`, `int`, `long`, `bool`, `string`, `nullObject`, `enumValue(type, name)` (a constant by its field name; see `ClassTarget.enumConstant` for obfuscated enums), `staticField(FieldTarget | FieldRef)`, `setStatic(FieldTarget | FieldRef, value)`, `newInstance(type, ctorProto = "()V", vararg args)`, `call(ExtMethod | MethodTarget, args)` (fails when the extension method does not exist or the argument count does not match), `ExtMethod(args)` (the same as `call` for a static extension method), `callStatic(owner, name, proto, args)`, `whenTrue`, `whenFalse`, `whenNull`, `whenNotNull`, `whenEqual`, `whenNotEqual`, `whenInstanceOf(value, type)` (each returns `Otherwise` with `otherwise { }`), `returnVoid`, `returnValue`, `returnTrue`, `returnFalse`, `returnNull`.
 
 `ValueRef`: `type`, `cast(type)`, `field(FieldTarget | FieldRef)`, `fieldOfType(type)`, `set(field, value)`, `assign(value)` (fails on a value read from a field), `call(ExtMethod | MethodTarget, args)`, `callVirtual(owner, name, proto, args)`, `callInterface(...)`, `size()`, `get(index)`, `plus`, `minus`.
 
@@ -230,7 +233,7 @@ Resource file and value helpers:
 | `Vector.svg(source)` | A vector image from an SVG: paths and basic shapes with fills and strokes; `currentColor` takes the screen's icon color. |
 | `CodeScope.whenEnabled(toggle) { }` | Branch on a toggle at runtime; returns `Otherwise`. |
 | `gate(toggle) { GateScope }` | Hooks inside take effect only while the toggle is on. |
-| `GateScope` | `MethodTarget` and `PointTarget` `before { }`, `after { }`; `MethodTarget.alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / Long / String)`; `PointTarget.skip()`; `FunctionTarget.wrap(export)`, `wrap(export, vararg modules)`, `alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / String)`, `setArgument(index, path, value)`. |
+| `GateScope` | `MethodTarget` and `PointTarget` `before { }`, `after { }`; `MethodTarget.alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / Long / String)`; `PointTarget.skip()`; `FunctionTarget.before { }`, `after { }`, `replace { }`, `alwaysReturn()`, `alwaysReturnNull()`, `alwaysReturn(Boolean / Int / String)`, `setArgument(index, path, value)`. |
 
 ## `app.reseam.patch.dex`
 

@@ -64,13 +64,6 @@ impl FunctionBody {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct Hook {
-    pub module: crate::ModuleId,
-    pub export: StringId,
-    pub bound: Vec<crate::wrap::Bound>,
-}
-
 /// Owns edits over a borrowed file. Original function and string identities
 /// remain stable. Only additions, changed bodies and indices allocate storage.
 /// Indices and closure analysis are built lazily and retained in detached edits.
@@ -90,15 +83,15 @@ pub struct Edits {
     pub(crate) string_index: rustc_hash::FxHashMap<(u64, StringKind), Vec<StringId>>,
     original_strings_indexed: bool,
     pub(crate) global: FunctionId,
-    pub(crate) modules: Vec<FunctionId>,
-    pub(crate) module_exports: Vec<Vec<StringId>>,
+    pub(crate) modules: Vec<crate::link::LinkedModule>,
+    pub(crate) link_names: Option<crate::link::LinkNames>,
     pub(crate) string_switches: u32,
-    pub(crate) hook_graph: Option<crate::wrap::HookGraph>,
+    pub(crate) hook_graph: Option<crate::environment::HookGraph>,
     pub(crate) metro: Option<crate::metro::MetroModules>,
-    pub(crate) roots: BTreeMap<FunctionId, crate::wrap::RootAttachment>,
-    /// Wrapped app functions, each with the appended function now holding its original body.
+    pub(crate) roots: BTreeMap<FunctionId, crate::environment::RootAttachment>,
+    /// Hooked app functions, each with the appended function now holding its original body.
     pub(crate) relocated: BTreeMap<FunctionId, FunctionId>,
-    /// App functions replaced by a constant result before any wrap kept their original body.
+    /// App functions replaced before any hook kept their original body.
     pub(crate) discarded: BTreeSet<FunctionId>,
 }
 
@@ -142,7 +135,7 @@ impl<'a> Editor<'a> {
                 original_strings_indexed: false,
                 global,
                 modules: Vec::new(),
-                module_exports: Vec::new(),
+                link_names: None,
                 string_switches,
                 hook_graph: None,
                 metro: None,
@@ -200,7 +193,6 @@ impl<'a> Editor<'a> {
             }
             self.edits.strings.truncate(strings);
             self.edits.modules.truncate(modules);
-            self.edits.module_exports.truncate(modules);
             self.edits.global = global;
             self.edits.string_switches = switches;
         }

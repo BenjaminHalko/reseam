@@ -19,7 +19,7 @@ fun MethodTarget.before(block: CodeScope.() -> Unit) =
     method.insertCode(method.edits?.entry(method) ?: 0, emptyList(), block)
 
 /**
- * Runs `block` before every return; `capture("result")` is the value being returned. Referenced
+ * Runs `block` before every return; [CodeScope.result] is the value being returned. Referenced
  * parameters and `thisObject` are saved at entry, before the body can reuse their registers.
  */
 fun MethodTarget.after(block: CodeScope.() -> Unit) {
@@ -32,10 +32,10 @@ fun MethodTarget.after(block: CodeScope.() -> Unit) {
         // emitted returns follow every original return still to be processed.
         val current = target.instructions
         val index = current.indices.filter { current[it].opcode?.isReturn == true }[ordinal]
-        val captures =
-            if (target.returnType == Type.Void) emptyList()
-            else listOf(Capture("result", target.returnType, target.registerA(index)))
-        target.insertCode(index, captures, block, snapshots)
+        val returned =
+            if (target.returnType == Type.Void) null
+            else Capture("result", target.returnType, target.registerA(index))
+        target.insertCode(index, emptyList(), block, snapshots, returned)
     }
     if (snapshots.isNotEmpty()) {
         val incomingBase = target.registersSize - target.insSize
@@ -194,11 +194,12 @@ internal fun Method.insertCode(
     captures: List<Capture>,
     block: CodeScope.() -> Unit,
     entrySnapshots: MutableMap<Int, EntrySnapshot>? = null,
+    returned: Capture? = null,
     branches: InsertionBranches =
         if (entrySnapshots != null) InsertionBranches.RUN_INSERTION
         else InsertionBranches.KEEP_ORIGINAL_TARGET,
 ) {
-    val emitter = CodeEmitter.forInsertion(this, index, captures, entrySnapshots)
+    val emitter = CodeEmitter.forInsertion(this, index, captures, returned, entrySnapshots)
     emitter.block()
     val instructions = emitter.build()
     val localGrowth = emitter.plannedLocalGrowth

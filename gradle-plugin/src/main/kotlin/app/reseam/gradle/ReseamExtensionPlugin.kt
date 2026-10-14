@@ -11,6 +11,8 @@ import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 
+internal const val NATIVE_MODULE_TYPES = "nativeModuleTypes"
+
 internal class ReseamExtensionPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         if (project.file("src/main/js").isDirectory) {
@@ -43,7 +45,7 @@ internal class ReseamExtensionPlugin : Plugin<Project> {
         val sourceSets = project.extensions.getByType(SourceSetContainer::class.java)
         val stubs = sourceSets.create("stubs")
         val main = sourceSets.getByName("main")
-        main.compileClasspath += stubs.output + project.resolve(ClassVariant.SETTINGS)
+        main.compileClasspath += stubs.output + project.resolve(ModuleVariant.SETTINGS)
         val platform = project.files(project.provider { AndroidSdk.platformJar() })
         project.dependencies.add("compileOnly", platform)
         project.dependencies.add("stubsCompileOnly", platform)
@@ -90,7 +92,13 @@ internal class ReseamExtensionPlugin : Plugin<Project> {
                     dependsOn(apiCheck)
                 }
             }
-        project.publish(ClassVariant.EXPORTS, main)
+        project.tasks.register(NATIVE_MODULE_TYPES, NativeModuleTypesTask::class.java) {
+            group = "build"
+            description = "Declares the extension's React Native modules for TypeScript."
+            classes.from(main.output.classesDirs)
+            output.set(project.layout.buildDirectory.dir("reseam/types"))
+        }
+        project.publish(ModuleVariant.EXPORTS, main)
         project.tasks.named("build") { dependsOn(dex) }
     }
 }

@@ -30,28 +30,50 @@ internal class ReseamWorkspacePlugin : Plugin<Settings> {
         val folders =
             directories(File(root, "apps")).map { settings.appFolder(it) } +
                 directories(File(root, "shared")).map { settings.sharedFolder(it) }
+        val typed = folders.filter { it.typed }
+        // The root resolves through these; declaring its own repositories would drop them.
+        if (typed.isNotEmpty())
+            settings.dependencyResolutionManagement.repositories.npmRegistry(
+                packages = typed.flatMap { typePackages(it.dir) }.map { it.first.name }.toSet(),
+                scopes = setOf(TypeScript.SCOPE),
+            )
         val artifacts = folders.flatMap { it.artifacts() } + "d8-globals.dex" + "kotlin.dex"
         require(artifacts.size == artifacts.toSet().size) {
             "workspace artifact names must be unique"
         }
         settings.gradle.beforeProject {
-            if (path == ":")
-                return@beforeProject pluginManager.apply(ReseamBundlePlugin::class.java)
+            if (path == ":") {
+                pluginManager.apply(ReseamBundlePlugin::class.java)
+                typed.forEach { folder ->
+                    registerTypecheck(
+                        folder.dir,
+                        folder.name,
+                        folder.extensions.filterNot { it.javascript }.map { project(it.path) },
+                    )
+                }
+                return@beforeProject
+            }
             val folder = folders.firstOrNull { path in it.paths() } ?: return@beforeProject
             reseamArtifact().name.set(folder.artifact(path))
             when (path) {
                 folder.patch -> {
                     pluginManager.apply(ReseamPatchesPlugin::class.java)
                     folder.settings?.let { dependencies.add("api", project(it)) }
-                    folder.extensions
-                        .filterNot { it.javascript }
-                        .forEach {
-                            dependencies.add(ClassVariant.EXPORTS.dependencies, project(it.path))
-                        }
+                    folder.extensions.forEach {
+                        val variant =
+                            if (it.javascript) ModuleVariant.JAVASCRIPT else ModuleVariant.EXPORTS
+                        dependencies.add(variant.dependencies, project(it.path))
+                    }
                 }
                 folder.settings -> pluginManager.apply(ReseamSettingsPlugin::class.java)
                 else -> {
                     pluginManager.apply(ReseamExtensionPlugin::class.java)
+                    if (folder.typed)
+                        plugins.withType(ReseamJavascriptPlugin::class.java) {
+                            tasks.named("bundleJavascript") {
+                                dependsOn(":typecheck-${folder.name}")
+                            }
+                        }
                     // The engine links the app runtime; extensions only compile against it.
                     plugins.withId("java-library") {
                         dependencies.add(
@@ -61,7 +83,7 @@ internal class ReseamWorkspacePlugin : Plugin<Settings> {
                         // An extension reads its own folder's settings and those of the extensions
                         // it uses.
                         folder.settings?.let {
-                            dependencies.add(ClassVariant.SETTINGS.dependencies, project(it))
+                            dependencies.add(ModuleVariant.SETTINGS.dependencies, project(it))
                         }
                         listOf("compileOnly", "implementation").forEach { scope ->
                             configurations
@@ -73,7 +95,7 @@ internal class ReseamWorkspacePlugin : Plugin<Settings> {
                                     if (used != null && used !== folder)
                                         used.settings?.let {
                                             dependencies.add(
-                                                ClassVariant.SETTINGS.dependencies,
+                                                ModuleVariant.SETTINGS.dependencies,
                                                 project(it),
                                             )
                                         }

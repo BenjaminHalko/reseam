@@ -99,6 +99,7 @@ class PatchRuntime() {
 
 internal class PatchRun {
     val cache = RunCache()
+    val appModules = AppModules()
     private val settings =
         IdentityHashMap<SettingsHost, MutableList<Pair<ReseamPatch, List<SettingsSection>>>>()
     private val settingsOwners = mutableMapOf<String, SettingsHost>()

@@ -10,6 +10,7 @@ mod search;
 
 pub use dex::ClassFields;
 pub use extensions::ExtensionSet;
+pub(crate) use hermes::hermes_imports;
 pub use search::MethodRefQuery;
 
 use reseam_apk::ApkFile;

@@ -27,7 +27,10 @@ interface CodeScope {
 
     val lastParam: ValueRef
 
-    /** A value captured by a [PointTarget.captureAs], or `result` inside [after]. */
+    /** The value being returned, inside a method-level [after] hook of a non-void method. */
+    val result: ValueRef
+
+    /** A value captured by a [PointTarget.captureAs]. */
     fun capture(name: String): ValueRef
 
     /** The register [MethodTarget.reserveLocal] holds for this method, as a value of this block. */

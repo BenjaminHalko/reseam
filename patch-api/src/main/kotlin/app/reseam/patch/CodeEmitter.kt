@@ -22,6 +22,7 @@ private constructor(
     internal val insertIndex: Int?,
     internal val mode: EmissionMode,
     internal val captures: List<Capture>,
+    private val returned: Capture? = null,
     internal val entrySnapshots: MutableMap<Int, EntrySnapshot>? = null,
 ) : CodeScope {
     internal val ops = mutableListOf<Op>()
@@ -41,6 +42,7 @@ private constructor(
             method: Method,
             index: Int,
             captures: List<Capture>,
+            returned: Capture? = null,
             entrySnapshots: MutableMap<Int, EntrySnapshot>? = null,
         ) =
             CodeEmitter(
@@ -48,6 +50,7 @@ private constructor(
                 index,
                 mode = EmissionMode.INSERTION,
                 captures = captures,
+                returned = returned,
                 entrySnapshots = entrySnapshots,
             )
 
@@ -101,6 +104,16 @@ private constructor(
 
     override val lastParam: ValueRef
         get() = param(method.parameterTypes.lastIndex)
+
+    override val result: ValueRef
+        get() {
+            val capture =
+                returned
+                    ?: error(
+                        "result exists only in a method-level after hook of a non-void method, not in ${info.descriptor}"
+                    )
+            return Value(capture.register, capture.type)
+        }
 
     override fun capture(name: String): ValueRef {
         val capture =

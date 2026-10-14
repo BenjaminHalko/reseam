@@ -122,7 +122,7 @@ val afterEntryValues =
                 {
                     callStatic("com.example.Observer", "wide", "(J)V", held)
                 }
-            capture("result").assign(held)
+            result.assign(held)
         }
         target.method("getFeatureSwitchValue").after {
             val marker = int(42)
@@ -136,7 +136,7 @@ val afterEntryValues =
                 param(2),
                 lastParam,
                 paramOfType(Type.String),
-                capture("result"),
+                result,
             )
         }
         target.method("receiver").after {
@@ -148,7 +148,7 @@ val afterEntryValues =
             )
         }
         target.method("resultOnly").after {
-            capture("result").assign(int(42))
+            result.assign(int(42))
         }
     }
 

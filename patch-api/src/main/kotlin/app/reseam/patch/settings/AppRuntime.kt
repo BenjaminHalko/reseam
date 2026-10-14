@@ -7,6 +7,8 @@ import app.reseam.patch.ActiveRuntime
 import app.reseam.patch.CodeScope
 import app.reseam.patch.ExtClass
 import app.reseam.patch.ExtJsModule
+import app.reseam.patch.JsCodeScope
+import app.reseam.patch.JsValue
 import app.reseam.patch.Type
 import app.reseam.patch.ValueRef
 import app.reseam.patch.XmlElement
@@ -43,12 +45,8 @@ object ReseamReactPackage : ExtClass("app.reseam.runtime.react.ReseamReactPackag
 
 internal object AppRuntimeJs : ExtJsModule("reseam-app-runtime-js") {
     override val source = HermesModule.AppRuntime
-    val skipWhen by export()
-    val returnNullWhen by export()
-    val returnWhen by export()
-    val wrapWhen by export()
-    val wrapWithModulesWhen by export()
-    val setArgumentWhen by export()
+    val isEnabled by export()
+    val withProperty by export()
 }
 
 /**
@@ -90,3 +88,7 @@ fun XmlElement.opensSettings() {
 
 internal val bundle: RunningBundleInfo
     get() = ActiveRuntime.current.bundle
+
+/** The running bundle's value of [setting] while the app runs. */
+fun JsCodeScope.valueOf(setting: ToggleSetting): JsValue =
+    call(AppRuntimeJs.isEnabled, string(bundle.name), string(setting.key), bool(setting.default))
