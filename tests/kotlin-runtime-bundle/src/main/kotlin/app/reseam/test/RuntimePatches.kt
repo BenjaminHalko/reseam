@@ -242,11 +242,11 @@ val unwrapApplication =
         dependsOn(appEntryHook)
 
         execute {
+            val wrapper = manifest.applicationClass!!
             manifest.edit {
-                val application = findByTag("application").single()
-                application["android:name"] =
+                findByTag("application").single()["android:name"] =
                     bytecode
-                        .findClass(application["android:name"]!!)!!
+                        .findClass(wrapper)!!
                         .superclass!!
                         .removePrefix("L")
                         .removeSuffix(";")

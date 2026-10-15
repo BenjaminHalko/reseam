@@ -25,10 +25,9 @@ pub(super) fn attribute_text(
     if name.contains(':') && namespace.is_none() {
         return None;
     }
-    let attribute = attributes.iter().find(|attribute| {
-        attribute.namespace == namespace
-            && document.string(attribute.name).as_deref() == Some(local)
-    })?;
+    let attribute = attributes
+        .iter()
+        .find(|attribute| document.is_attribute(attribute, namespace, local))?;
     Some(match attribute.value.kind {
         ResValue::STRING => document.attribute_string(attribute)?.into_owned(),
         ResValue::INT_DEC => (attribute.value.data as i32).to_string(),
@@ -46,10 +45,13 @@ fn set_attribute(
     name: u32,
     value: ResValue,
 ) {
-    if let Some(attribute) = attributes
-        .iter_mut()
-        .find(|attribute| attribute.namespace == namespace && attribute.name == name)
-    {
+    let local = document.string(name).map(std::borrow::Cow::into_owned);
+    let existing = local.and_then(|local| {
+        attributes
+            .iter()
+            .position(|attribute| document.is_attribute(attribute, namespace, &local))
+    });
+    if let Some(attribute) = existing.map(|index| &mut attributes[index]) {
         attribute.set_value(value);
     } else {
         document.insert_attribute(attributes, AxmlAttribute::new(namespace, name, value));
@@ -149,10 +151,7 @@ pub fn xml_remove_attribute(doc: u32, element: u32, name: String) {
         nodes.edit_attributes(document, element, |document, attributes| {
             let (namespace, local) = split_name(document, &name);
             if !name.contains(':') || namespace.is_some() {
-                attributes.retain(|attribute| {
-                    !(attribute.namespace == namespace
-                        && document.string(attribute.name).as_deref() == Some(local))
-                });
+                attributes.retain(|attribute| !document.is_attribute(attribute, namespace, local));
             }
             Ok(())
         })

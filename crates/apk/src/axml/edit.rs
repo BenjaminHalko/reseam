@@ -5,6 +5,7 @@ mod adopt;
 
 use super::NodeMetadata;
 
+use super::android_attrs::android_attr_res_id;
 use super::{ANDROID_NS, AxmlAttribute, AxmlDocument, AxmlEvent};
 use crate::error::{Result, invalid};
 use crate::resources::ResourceTable;
@@ -86,6 +87,19 @@ impl AxmlDocument {
         self.attributes(index)
             .iter()
             .find(|attr| self.resource_id_for(attr.name) == Some(res_id))
+    }
+
+    /// Whether `attr` is `local` in `namespace`. An `android:` attribute is the framework attribute
+    /// with that resource ID whatever its name string holds, as the platform reads it; protected
+    /// manifests blank or scramble those strings.
+    pub fn is_attribute(&self, attr: &AxmlAttribute, namespace: Option<u32>, local: &str) -> bool {
+        let framework_id = namespace
+            .filter(|&uri| self.string(uri).as_deref() == Some(ANDROID_NS))
+            .and_then(|_| android_attr_res_id(local));
+        match framework_id {
+            Some(id) if self.resource_id_for(attr.name) == Some(id) => true,
+            _ => attr.namespace == namespace && self.string(attr.name).as_deref() == Some(local),
+        }
     }
 
     pub fn attribute_named(&self, index: usize, name: &str) -> Option<&AxmlAttribute> {

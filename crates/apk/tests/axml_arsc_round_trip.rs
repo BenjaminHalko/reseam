@@ -497,3 +497,30 @@ fn resource_lookup_and_string_replacement_survive_serialization() -> TestResult 
     }
     Ok(())
 }
+
+#[test]
+fn framework_attributes_match_by_resource_id_when_their_name_string_is_scrambled() -> TestResult {
+    let compiled = axml::compile_xml(
+        r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.test"><application android:name=".App"/></manifest>"#,
+        None,
+    )?;
+    let scrambled = replace_bytes(&compiled, b"name", b"zzzz");
+    let doc = AxmlDocument::parse(&scrambled)?;
+    let application = doc.find_element("application").expect("application");
+    let attr = &doc.attributes(application)[0];
+    assert_eq!(doc.string(attr.name).as_deref(), Some("zzzz"));
+    let android = doc.declared_namespace("android");
+    assert!(doc.is_attribute(attr, android, "name"));
+    assert!(!doc.is_attribute(attr, android, "label"));
+    assert!(!doc.is_attribute(attr, None, "name"));
+    assert_eq!(doc.application_name().as_deref(), Some(".App"));
+    Ok(())
+}
+
+fn replace_bytes(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+    let at = bytes
+        .windows(from.len())
+        .position(|window| window == from)
+        .expect("string in pool");
+    [&bytes[..at], to, &bytes[at + from.len()..]].concat()
+}
