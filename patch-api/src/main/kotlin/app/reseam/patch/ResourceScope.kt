@@ -5,10 +5,10 @@
 
 package app.reseam.patch
 
-import app.reseam.patch.native.resAddIn
 import app.reseam.patch.native.resAddFile
 import app.reseam.patch.native.resAddFileData
 import app.reseam.patch.native.resAddId
+import app.reseam.patch.native.resAddIn
 import app.reseam.patch.native.resAddRaw
 import app.reseam.patch.native.resArrayGet
 import app.reseam.patch.native.resArraySet
@@ -72,7 +72,10 @@ class ResourceScope internal constructor(private val componentName: String? = nu
 
     fun add(resType: String, name: String, value: String): UInt? = add(resType, name, value, "")
 
-    /** Adds or replaces `resType/name` in the configuration [qualifiers] names, as [addFile] reads them. */
+    /**
+     * Adds or replaces `resType/name` in the configuration [qualifiers] names, as [addFile] reads
+     * them.
+     */
     fun add(resType: String, name: String, value: String, qualifiers: String): UInt? =
         resAddIn(componentName, resType, name, value, qualifiers)
 
