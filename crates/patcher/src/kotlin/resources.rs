@@ -152,21 +152,31 @@ pub fn res_add(
     name: String,
     value: String,
 ) -> Result<Option<u32>, String> {
+    res_add_in(component, res_type, name, value, String::new())
+}
+
+/// [`res_add`] in the configuration `qualifiers` names, written as in a `res/` directory name.
+#[export]
+pub fn res_add_in(
+    component: Option<String>,
+    res_type: String,
+    name: String,
+    value: String,
+    qualifiers: String,
+) -> Result<Option<u32>, String> {
     with_scope_result(component, |res| {
-        if res_type == "string" {
-            return res
-                .table_mut()
-                .add_string_resource(&name, &value)
-                .map_err(|error| error.to_string());
-        }
-        match axml::infer_value(&value, Some(res)) {
-            Ok(AttributeValue::Value(parsed)) => res
-                .table_mut()
-                .add_resource(&res_type, &name, parsed)
-                .map_err(|error| error.to_string()),
-            Ok(AttributeValue::Text) => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
+        let parsed = if res_type == "string" {
+            ResValue::string(res.table_mut().add_global_string(&value))
+        } else {
+            match axml::infer_value(&value, Some(res)) {
+                Ok(AttributeValue::Value(parsed)) => parsed,
+                Ok(AttributeValue::Text) => return Ok(None),
+                Err(error) => return Err(error.to_string()),
+            }
+        };
+        res.table_mut()
+            .add_resource_in(&res_type, &name, parsed, &qualifiers)
+            .map_err(|error| error.to_string())
     })
 }
 

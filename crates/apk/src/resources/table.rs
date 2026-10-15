@@ -165,7 +165,18 @@ impl ResourceTable {
         entry_name: &str,
         value: ResValue,
     ) -> Result<Option<u32>> {
-        self.set_entry_in(type_name, entry_name, EntryValue::Simple(value), "")
+        self.add_resource_in(type_name, entry_name, value, "")
+    }
+
+    /// [`Self::add_resource`] in the configuration `qualifiers` names (`""`, `night`, `v31`).
+    pub fn add_resource_in(
+        &mut self,
+        type_name: &str,
+        entry_name: &str,
+        value: ResValue,
+        qualifiers: &str,
+    ) -> Result<Option<u32>> {
+        self.set_entry_in(type_name, entry_name, EntryValue::Simple(value), qualifiers)
     }
 
     pub(super) fn set_entry_in(

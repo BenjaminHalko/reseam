@@ -5,7 +5,7 @@
 
 package app.reseam.patch
 
-import app.reseam.patch.native.resAdd
+import app.reseam.patch.native.resAddIn
 import app.reseam.patch.native.resAddFile
 import app.reseam.patch.native.resAddFileData
 import app.reseam.patch.native.resAddId
@@ -70,8 +70,11 @@ class ResourceScope internal constructor(private val componentName: String? = nu
 
     fun setString(name: String, value: String): Boolean = resSetString(componentName, name, value)
 
-    fun add(resType: String, name: String, value: String): UInt? =
-        resAdd(componentName, resType, name, value)
+    fun add(resType: String, name: String, value: String): UInt? = add(resType, name, value, "")
+
+    /** Adds or replaces `resType/name` in the configuration [qualifiers] names, as [addFile] reads them. */
+    fun add(resType: String, name: String, value: String, qualifiers: String): UInt? =
+        resAddIn(componentName, resType, name, value, qualifiers)
 
     fun addString(name: String, value: String): UInt? = add("string", name, value)
 
@@ -80,6 +83,9 @@ class ResourceScope internal constructor(private val componentName: String? = nu
     fun addInteger(name: String, value: Int): UInt? = add("integer", name, value.toString())
 
     fun addColor(name: String, color: String): UInt? = add("color", name, color)
+
+    fun addColor(name: String, color: String, qualifiers: String): UInt? =
+        add("color", name, color, qualifiers)
 
     fun addDimen(name: String, dimen: String): UInt? = add("dimen", name, dimen)
 

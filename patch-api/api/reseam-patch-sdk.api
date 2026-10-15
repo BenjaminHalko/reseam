@@ -686,8 +686,10 @@ public final class app/reseam/patch/ResolvedPoint {
 }
 
 public final class app/reseam/patch/ResourceScope {
+	public final fun add-8qcQ4KI (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lkotlin/UInt;
 	public final fun add-L32MxnI (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lkotlin/UInt;
 	public final fun addBool-uT2Fmlo (Ljava/lang/String;Z)Lkotlin/UInt;
+	public final fun addColor-L32MxnI (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lkotlin/UInt;
 	public final fun addColor-uT2Fmlo (Ljava/lang/String;Ljava/lang/String;)Lkotlin/UInt;
 	public final fun addDimen-uT2Fmlo (Ljava/lang/String;Ljava/lang/String;)Lkotlin/UInt;
 	public final fun addFile-K0zNJlA (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;[BLjava/lang/String;)I
