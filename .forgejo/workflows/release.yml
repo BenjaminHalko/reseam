@@ -174,6 +174,14 @@ jobs:
           bun run --cwd browser engine
           bun run --cwd browser types
 
+      - name: Check WASI lints
+        run: CC_wasm32_wasip1="$WASI_SDK_PATH/bin/clang" AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar" cargo clippy -p reseam-sdk-browser --target wasm32-wasip1 -- -D warnings
+
+      - name: Check the browser package
+        run: |
+          bun run --cwd browser check
+          bun run --cwd browser test
+
       - name: Check the tag names the workspace version
         if: startsWith(github.ref, 'refs/tags/')
         run: cargo xtask check-tag ${{ github.ref_name }}

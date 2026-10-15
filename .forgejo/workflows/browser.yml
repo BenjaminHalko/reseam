@@ -8,6 +8,7 @@ on:
 
 jobs:
   build:
+    if: "!startsWith(github.event.head_commit.message, 'chore: release v')"
     runs-on: docker
     container:
       image: cimg/android:2026.03-node
