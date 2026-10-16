@@ -23,4 +23,21 @@ object Icons {
                 "C 9.484 3.009 7.069 3.991 5.26 5.74 L 3 8",
             "M 3 3 L 3 8 L 8 8",
         )
+    @JvmField
+    val UPLOAD =
+        VectorImage.stroked(
+            TRAY,
+            "M 17 8 L 12 3 L 7 8",
+            "M 12 3 L 12 15",
+        )
+    @JvmField
+    val DOWNLOAD =
+        VectorImage.stroked(
+            TRAY,
+            "M 7 10 L 12 15 L 17 10",
+            "M 12 15 L 12 3",
+        )
 }
+
+private const val TRAY =
+    "M 21 15 L 21 19 C 21 20.105 20.105 21 19 21 L 5 21 C 3.895 21 3 20.105 3 19 L 3 15"

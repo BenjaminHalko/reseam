@@ -56,6 +56,16 @@ object AppSettings : SettingsGroup(ExampleStrings) {
 
 `toggle`, `text`, `folder`, and `choice` take a default and an optional [icon](#icons). A setting's title is the string named after its property in snake case, and its summary the same name with `_summary`, when there is one. A missing title fails the build. The build generates `ExampleStrings` from `strings.xml`, with one member per string, for choices, [sections](#register-a-patchs-settings) and [pages](#pages).
 
+A toggle can cover other toggles, as one switch for a whole feature:
+
+```kotlin
+val hideStories by toggle(default = false)
+val hideReels by toggle(default = false)
+val focusMode by toggle(default = false, covers = listOf(hideStories, hideReels))
+```
+
+While `focusMode` is on, `hideStories` and `hideReels` read as on everywhere, gates included, and show on and greyed out on the settings screen. Their own values are kept and apply again when `focusMode` is turned off. Declare the covered toggles first: a property used before its declaration is still null.
+
 The storage key comes from the object and property names: `AppSettings.hideAds` is stored as `app_settings.hide_ads`. Each bundle stores its settings apart, so a key only needs to be unique within your bundle.
 
 > [!WARNING]
@@ -88,6 +98,8 @@ val appSettings = settingsHost("example") {
 `install` runs after every patch that added settings. `strings(ExampleStrings)` ships a string table your extensions read even when no setting on the screen uses it. Use it to give users a way in, typically a row in the app's own settings. `openSettings()` in a code block shows your bundle's settings over the app's current screen, from any thread. When the app builds the row from an intent, such as an androidx `Preference` with an `<intent>`, call `opensSettings()` on that `<intent>` element and redirect the call that starts it to `Reseam.startActivity`.
 
 The screen opens with an about card: your brand's logo and name, your bundle's version, the engine version, and the `license` in your [`manifest.toml`](13_bundles.md#manifesttoml).
+
+It ends with Export settings and Import settings. An export is a JSON file with the bundle name and the value the user set for every toggle, text, and choice setting. Folder settings stay out, since the folder permission belongs to the install. Import applies the values that match a setting on the screen and leaves the rest as they are, so a file from another app of your bundle changes only the settings both share.
 
 ## Brand
 

@@ -119,7 +119,10 @@ internal class SettingsFiles(
         field("summary") { text(setting.summary) }
         field("icon") { vector(setting.icon) }
         when (setting) {
-            is ToggleSetting -> field("default", setting.default)
+            is ToggleSetting -> {
+                field("default", setting.default)
+                field("covers") { array(setting.covers) { value(it.key) } }
+            }
             is TextSetting -> {
                 field("default", setting.default)
                 field("multiline", setting.multiline)

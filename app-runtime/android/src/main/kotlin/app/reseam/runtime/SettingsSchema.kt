@@ -14,6 +14,7 @@ internal class SettingsSchema(json: JSONObject) {
     val license: String? = json.optionalString("license")
     val pages = json.getJSONArray("pages").objects().map(::Page)
     val sections = json.getJSONArray("sections").objects().map(::Section)
+    val settings = sections.flatMap { it.settings }.distinctBy { it.key }
 
     fun page(id: String): Page =
         pages.firstOrNull { it.id == id }
@@ -28,7 +29,7 @@ internal class SettingsSchema(json: JSONObject) {
     }
 
     fun setting(key: String): Setting =
-        sections.asSequence().flatMap { it.settings }.firstOrNull { it.key == key }
+        settings.firstOrNull { it.key == key }
             ?: throw IllegalArgumentException("Unknown setting: $key")
 
     class Page(json: JSONObject) {
@@ -63,6 +64,7 @@ internal class SettingsSchema(json: JSONObject) {
 
     class Toggle(json: JSONObject) : Setting(json) {
         val defaultValue: Boolean = json.getBoolean("default")
+        val covers: List<String> = json.getJSONArray("covers").strings()
     }
 
     class Text(json: JSONObject) : Setting(json) {
@@ -105,3 +107,5 @@ private fun JSONObject.optionalText(key: String): DisplayText? =
     if (isNull(key)) null else text(key)
 
 private fun JSONArray.objects(): List<JSONObject> = List(length()) { getJSONObject(it) }
+
+private fun JSONArray.strings(): List<String> = List(length()) { getString(it) }

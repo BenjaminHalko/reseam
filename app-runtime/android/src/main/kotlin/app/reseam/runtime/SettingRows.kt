@@ -57,9 +57,15 @@ internal class SettingRows(private val bundle: ReseamBundle, private val ui: Ui)
         item.supporting(toggle.summary?.resolve(bundle.name)).trailing(view).onClick {
             view.toggle()
         }
-        onChange(toggle.key) {
+        val refresh = {
+            val covered = settings.isCovered(toggle.key)
             view.setChecked(settings.getBoolean(toggle.key, toggle.defaultValue))
+            item.isEnabled = !covered
+            // The row already shows the disabled state, so the switch only stops taking taps.
+            view.isClickable = !covered
         }
+        onChange(toggle.key, refresh)
+        settings.coverers(toggle.key).forEach { onChange(it, refresh) }
     }
 
     private fun choice(item: ListItem, choice: SettingsSchema.Choice) {
@@ -114,7 +120,7 @@ private fun displayFolder(value: String): String {
     return last.substringAfterLast(':').ifEmpty { value }
 }
 
-private tailrec fun activity(context: Context): Activity =
+internal tailrec fun activity(context: Context): Activity =
     when (context) {
         is Activity -> context
         is ContextWrapper -> activity(context.baseContext)

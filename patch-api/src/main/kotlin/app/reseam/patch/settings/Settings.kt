@@ -23,6 +23,7 @@ sealed class Setting<T>(
     override fun toString() = key
 }
 
+/** While this toggle is on, every toggle in [covers] reads as on and cannot be changed. */
 class ToggleSetting
 internal constructor(
     key: String,
@@ -31,6 +32,7 @@ internal constructor(
     summary: StringRef?,
     default: Boolean,
     icon: Vector?,
+    val covers: List<ToggleSetting>,
 ) : Setting<Boolean>(key, property, title, summary, default, icon)
 
 /** [multiline] lets the value hold one entry per line. */
@@ -128,8 +130,15 @@ fun section(page: SettingsPage, title: StringRef, vararg settings: Setting<*>) =
  * Declares a setting as a property of a [SettingsGroup]: `val hideAds by toggle(default = true)`.
  * The key derives from the group and property names unless given.
  */
-fun toggle(default: Boolean, key: String? = null, icon: Vector? = null) =
-    SettingDelegate(key) { ToggleSetting(it.key, it.property, it.title, it.summary, default, icon) }
+fun toggle(
+    default: Boolean,
+    key: String? = null,
+    icon: Vector? = null,
+    covers: List<ToggleSetting> = emptyList(),
+) =
+    SettingDelegate(key) {
+        ToggleSetting(it.key, it.property, it.title, it.summary, default, icon, covers)
+    }
 
 fun text(default: String, multiline: Boolean = false, key: String? = null, icon: Vector? = null) =
     SettingDelegate(key) {

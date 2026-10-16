@@ -206,7 +206,7 @@ Resource file and value helpers:
 | Symbol | Description |
 |---|---|
 | `SettingsGroup(strings)` | Base of an object that declares settings. A setting's title is the string named after its property in snake case, its summary that name with `_summary` when the table has it. |
-| `toggle(default, key = null, icon = null)` | Property delegate for a `ToggleSetting`. |
+| `toggle(default, key = null, icon = null, covers = emptyList())` | Property delegate for a `ToggleSetting`. While it is on, each toggle in `covers` reads as on and is greyed out on the settings screen. |
 | `text(default, multiline = false, key = null, icon = null)`, `folder(default, key = null, icon = null)` | Property delegates for `TextSetting` and `FolderSetting`; `default` is a string. A `multiline` text setting holds one entry per line. |
 | `SettingDelegate<S>` | Derives an omitted key from the property name in snake case, prefixed by the declaring object's name. |
 | `choice(default, choices, key = null, icon = null)` | `ChoiceSetting` with `Choice(value, title)`. |

@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import app.reseam.runtime.ui.Icons
 import app.reseam.runtime.ui.Tokens
 import app.reseam.runtime.ui.Ui
 
@@ -75,6 +76,25 @@ internal fun settingsPage(
     }
     if (pages.childCount == 0 && sections.isEmpty())
         content.addView(settingsMessage(ui, RuntimeStrings.noSettings))
+    if (root && schema.settings.isNotEmpty()) {
+        content.addView(ui.sectionLabel(RuntimeStrings.backup))
+        content.addView(
+            ui.itemGroup()
+                .add(
+                    ui.listItem(RuntimeStrings.exportSettings)
+                        .icon(Icons.UPLOAD)
+                        .supporting(RuntimeStrings.exportSettingsSummary)
+                        .onClick { exportSettings(activity(ui.context), bundle) }
+                )
+                .add(
+                    ui.listItem(RuntimeStrings.importSettings)
+                        .icon(Icons.DOWNLOAD)
+                        .supporting(RuntimeStrings.importSettingsSummary)
+                        .onClick { importSettings(activity(ui.context), bundle) }
+                ),
+            matchWidth(),
+        )
+    }
     if (root) {
         val results = SearchResults(ui, bundle, rows, content)
         val search = ui.searchBar(RuntimeStrings.searchSettings)

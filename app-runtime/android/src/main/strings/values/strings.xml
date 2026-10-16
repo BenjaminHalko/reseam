@@ -16,4 +16,20 @@
     <string name="engine_license">Engine <xliff:g id="engine">%1$s</xliff:g> · <xliff:g id="license">%2$s</xliff:g></string>
     <string name="clear_search">Clear search</string>
     <string name="back">Back</string>
+    <string name="backup">Backup</string>
+    <string name="export_settings">Export settings</string>
+    <string name="export_settings_summary">Save your settings to a file.</string>
+    <string name="import_settings">Import settings</string>
+    <string name="import_settings_summary">Load settings from a file you exported.</string>
+    <string name="settings_file_name"><xliff:g id="app">%1$s</xliff:g> settings.json</string>
+    <string name="settings_exported">Settings exported</string>
+    <plurals name="settings_imported">
+        <item quantity="one"><xliff:g id="count">%1$d</xliff:g> setting imported</item>
+        <item quantity="other"><xliff:g id="count">%1$d</xliff:g> settings imported</item>
+    </plurals>
+    <string name="export_failed">Could not export settings</string>
+    <string name="import_failed">Could not import settings</string>
+    <string name="import_unreadable">This file is not a settings export.</string>
+    <string name="import_nothing_applies">None of the settings in this file belong to this app.</string>
+    <string name="ok">OK</string>
 </resources>

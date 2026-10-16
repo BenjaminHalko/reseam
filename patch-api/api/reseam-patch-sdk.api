@@ -1627,8 +1627,8 @@ public final class app/reseam/patch/settings/SettingsKt {
 	public static final fun section (Lapp/reseam/patch/settings/StringRef;[Lapp/reseam/patch/settings/Setting;)Lapp/reseam/patch/settings/SettingsSection;
 	public static final fun text (Ljava/lang/String;ZLjava/lang/String;Lapp/reseam/patch/settings/Vector;)Lapp/reseam/patch/settings/SettingDelegate;
 	public static synthetic fun text$default (Ljava/lang/String;ZLjava/lang/String;Lapp/reseam/patch/settings/Vector;ILjava/lang/Object;)Lapp/reseam/patch/settings/SettingDelegate;
-	public static final fun toggle (ZLjava/lang/String;Lapp/reseam/patch/settings/Vector;)Lapp/reseam/patch/settings/SettingDelegate;
-	public static synthetic fun toggle$default (ZLjava/lang/String;Lapp/reseam/patch/settings/Vector;ILjava/lang/Object;)Lapp/reseam/patch/settings/SettingDelegate;
+	public static final fun toggle (ZLjava/lang/String;Lapp/reseam/patch/settings/Vector;Ljava/util/List;)Lapp/reseam/patch/settings/SettingDelegate;
+	public static synthetic fun toggle$default (ZLjava/lang/String;Lapp/reseam/patch/settings/Vector;Ljava/util/List;ILjava/lang/Object;)Lapp/reseam/patch/settings/SettingDelegate;
 }
 
 public final class app/reseam/patch/settings/SettingsPage {
@@ -1702,6 +1702,7 @@ public final class app/reseam/patch/settings/TextStyle {
 }
 
 public final class app/reseam/patch/settings/ToggleSetting : app/reseam/patch/settings/Setting {
+	public final fun getCovers ()Ljava/util/List;
 }
 
 public final class app/reseam/patch/settings/Typography {
