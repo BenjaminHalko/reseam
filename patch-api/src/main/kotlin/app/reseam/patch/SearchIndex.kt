@@ -27,6 +27,7 @@ import app.reseam.patch.native.findMethodsByProto
 import app.reseam.patch.native.findMethodsByStringPrefix
 import app.reseam.patch.native.findMethodsByStrings
 import app.reseam.patch.native.getAllClasses
+import app.reseam.patch.native.indexOfFirstStringWithPrefix
 import app.reseam.patch.native.isAddedDex
 import app.reseam.patch.native.methodReferences
 import app.reseam.patch.types.FieldRef
@@ -284,17 +285,30 @@ internal class SearchIndex(private val cache: RunCache) {
 
     fun calleesOf(method: Method): List<Method> = methodRefsOf(method).mapNotNull(::methodFor)
 
-    fun methodCalls(method: Method, target: Method): Boolean {
-        val signature = signatureOf(target)
-        return methodRefsOf(method).any {
-            MethodSignature(it.definingClass, it.name, it.proto) == signature
-        }
-    }
+    fun methodCalls(method: Method, target: Method): Boolean =
+        methodCalls(method, signatureOf(target))
 
     fun methodCalls(method: Method, ref: MethodRef): Boolean =
-        invokeSitesFor(MethodSignature(ref.definingClass, ref.name, ref.proto)).any {
-            it.first == method.handle
-        }
+        methodCalls(method, MethodSignature(ref.definingClass, ref.name, ref.proto))
+
+    private fun methodCalls(method: Method, signature: MethodSignature): Boolean {
+        cache.synchronize()
+        return invokeSites[signature]?.any { it.first == method.handle }
+            ?: methodRefsOf(method).any {
+                MethodSignature(it.definingClass, it.name, it.proto) == signature
+            }
+    }
+
+    fun methodHasStringPrefix(method: Method, prefix: String): Boolean {
+        cache.synchronize()
+        return seeds[Seed.Prefix(prefix)]?.contains(method.handle)
+            ?: (indexOfFirstStringWithPrefix(method.handle, prefix) != null)
+    }
+
+    fun methodHasLiteral(method: Method, value: Long): Boolean {
+        cache.synchronize()
+        return seeds[Seed.Literal(value)]?.contains(method.handle) ?: method.containsLiteral(value)
+    }
 
     fun followedByCheckCast(target: Method, type: String, lookAhead: Int): Int {
         val signature = signatureOf(target)
@@ -310,20 +324,34 @@ internal class SearchIndex(private val cache: RunCache) {
         }
     }
 
-    fun <T> poolFromSeeds(
-        seeds: List<Pair<String, Set<UInt>>>,
-        unit: String,
-        wrap: (Collection<UInt>) -> List<T>,
-    ): CandidatePool<T> {
+    /** Candidates from the plan's seeds in order, until no more than one batch remains. */
+    fun <T> narrowedPool(plan: QueryPlan<T>): CandidatePool<T> {
+        if (plan.seeds.isEmpty()) return plan.unconstrained()
+        var current: Set<UInt>? = null
+        val pipeline = mutableListOf<String>()
+        for (seed in plan.seeds) {
+            val seeded = seed()
+            pipeline += "${seeded.label}: ${seeded.handles.size} candidate ${plan.unit}"
+            val next = current?.intersect(seeded.handles) ?: seeded.handles
+            current = next
+            if (next.size <= CANDIDATE_BATCH) break
+        }
+        val winners = current.orEmpty()
+        return CandidatePool(plan.wrap(winners), pipeline, winners.size, emptyList(), null)
+    }
+
+    /** Candidates from every seed, so a query that matched nothing reports what emptied them. */
+    fun <T> exhaustivePool(plan: QueryPlan<T>): CandidatePool<T> {
+        if (plan.seeds.isEmpty()) return plan.unconstrained()
         var current: Set<UInt>? = null
         var lastNonEmpty: Set<UInt>? = null
         var exhaustedBy: String? = null
         val pipeline = mutableListOf<String>()
-        for ((label, candidates) in seeds.sortedBy { it.second.size }) {
-            val next = current?.intersect(candidates) ?: candidates
-            pipeline += "$label: ${candidates.size} candidate $unit"
+        for (seeded in plan.seeds.map { it() }.sortedBy { it.handles.size }) {
+            val next = current?.intersect(seeded.handles) ?: seeded.handles
+            pipeline += "${seeded.label}: ${seeded.handles.size} candidate ${plan.unit}"
             if (next.isEmpty()) {
-                exhaustedBy = label
+                exhaustedBy = seeded.label
                 break
             }
             current = next
@@ -337,7 +365,13 @@ internal class SearchIndex(private val cache: RunCache) {
                 exhaustedBy != null && lastNonEmpty == null -> 0
                 else -> nearMiss.size
             }
-        return CandidatePool(wrap(winners), pipeline, considered, wrap(nearMiss), exhaustedBy)
+        return CandidatePool(
+            plan.wrap(winners),
+            pipeline,
+            considered,
+            plan.wrap(nearMiss),
+            exhaustedBy,
+        )
     }
 
     private fun signatureOf(method: Method) =

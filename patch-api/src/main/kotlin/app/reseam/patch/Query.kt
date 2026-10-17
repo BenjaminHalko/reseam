@@ -178,7 +178,7 @@ internal abstract class QuerySpec<T : Any, S : RankScope>(private val kind: Stri
     protected fun extensionReason(): String? =
         if (domain == SearchDomain.INCLUDE_EXTENSIONS) "including extension classes" else null
 
-    protected abstract fun candidates(runtime: PatchRuntime): CandidatePool<T>
+    protected abstract fun plan(runtime: PatchRuntime): QueryPlan<T>
 
     protected open fun prefetch(runtime: PatchRuntime, candidates: List<T>) {}
 
@@ -191,10 +191,16 @@ internal abstract class QuerySpec<T : Any, S : RankScope>(private val kind: Stri
     protected abstract fun describe(value: T): String
 
     fun resolveOne(runtime: PatchRuntime, debugName: String?): Resolution<T> {
-        val evaluated = evaluate(runtime)
+        val plan = plan(runtime)
+        val evaluated = evaluate(runtime, runtime.index.narrowedPool(plan))
         val winner =
             evaluated.accepted.firstOrNull()
-                ?: error(noMatchMessage(kind, evaluated.noMatchReport(debugName)))
+                ?: error(
+                    noMatchMessage(
+                        kind,
+                        diagnosed(runtime, plan, evaluated).noMatchReport(debugName),
+                    )
+                )
         val runnerUp = evaluated.accepted.getOrNull(1)
         check(
             multiplicity == QueryMultiplicity.FIRST ||
@@ -210,7 +216,7 @@ internal abstract class QuerySpec<T : Any, S : RankScope>(private val kind: Stri
     }
 
     fun resolveAll(runtime: PatchRuntime, debugName: String?): Resolution<List<T>> {
-        val evaluated = evaluate(runtime)
+        val evaluated = evaluate(runtime, runtime.index.narrowedPool(plan(runtime)))
         val report =
             SearchMatchReport(
                 debugName ?: "anonymous",
@@ -222,11 +228,14 @@ internal abstract class QuerySpec<T : Any, S : RankScope>(private val kind: Stri
         return Resolution(evaluated.accepted.map { it.value }, report)
     }
 
-    private fun evaluate(runtime: PatchRuntime): Evaluated<T> {
-        val pool = candidates(runtime)
+    /** A failed evaluation redone over every seed, so its report names what emptied the query. */
+    private fun diagnosed(runtime: PatchRuntime, plan: QueryPlan<T>, failed: Evaluated<T>) =
+        if (plan.seeds.isEmpty()) failed else evaluate(runtime, runtime.index.exhaustivePool(plan))
+
+    private fun evaluate(runtime: PatchRuntime, pool: CandidatePool<T>): Evaluated<T> {
         val scored = mutableListOf<Scored<T>>()
         val rejected = mutableListOf<Rejected<T>>()
-        for (batch in pool.candidates.ifEmpty { pool.nearMissSeed }.chunked(256)) {
+        for (batch in pool.candidates.ifEmpty { pool.nearMissSeed }.chunked(CANDIDATE_BATCH)) {
             prefetch(runtime, batch)
             for (value in batch) {
                 val failure = mismatch(value, runtime)

@@ -91,4 +91,24 @@ internal class CandidatePool<T>(
     val exhaustedBy: String?,
 )
 
+/**
+ * Candidates are verified in batches of this size. Once seeds narrow a query to one batch, checking
+ * each candidate costs less than computing another seed, which scans the whole APK.
+ */
+internal const val CANDIDATE_BATCH = 256
+
+/** The handles one constraint admits, with the label match reports show for it. */
+internal class Seeded(val label: String, val handles: Set<UInt>)
+
+/**
+ * A query's seeds, cheapest to compute first. Each runs only when a pool reaches it, and the query
+ * verifies every constraint per candidate, so any subset of seeds finds the same matches.
+ */
+internal class QueryPlan<T>(
+    val seeds: List<() -> Seeded>,
+    val unit: String,
+    val wrap: (Collection<UInt>) -> List<T>,
+    val unconstrained: () -> CandidatePool<T>,
+)
+
 internal data class MethodSignature(val owner: String, val name: String, val proto: String)

@@ -45,33 +45,40 @@ internal class ClassQuerySpec : QuerySpec<DexClass, ClassRankScope>("class"), Cl
         predicates += predicate
     }
 
-    override fun candidates(runtime: PatchRuntime): CandidatePool<DexClass> {
+    override fun plan(runtime: PatchRuntime): QueryPlan<DexClass> {
         val index = runtime.index
-        val seeds = mutableListOf<Pair<String, Set<UInt>>>()
-        stringValues.forEach {
-            seeds +=
-                "strings(${quoted(it)})" to
-                    index.classesWithString(it).map(DexClass::handle).toSet()
-        }
-        enumNames.forEach {
-            seeds +=
-                "enumConstants(${quoted(it)})" to
-                    index.classesWithString(it).map(DexClass::handle).toSet()
-        }
-        sourceFiles.forEach {
-            seeds +=
-                "sourceFile(${quoted(it)})" to
-                    index.classesWithSourceFile(it).map(DexClass::handle).toSet()
-        }
-        if (seeds.isEmpty()) {
-            instanceFieldTypes.forEach {
-                seeds +=
-                    "hasInstanceField($it)" to
-                        index.classesWithInstanceFieldType(it).map(DexClass::handle).toSet()
+        val handles = { classes: Collection<DexClass> -> classes.map(DexClass::handle).toSet() }
+        val selective =
+            buildList<() -> Seeded> {
+                stringValues.forEach {
+                    add { Seeded("strings(${quoted(it)})", handles(index.classesWithString(it))) }
+                }
+                enumNames.forEach {
+                    add {
+                        Seeded("enumConstants(${quoted(it)})", handles(index.classesWithString(it)))
+                    }
+                }
+                sourceFiles.forEach {
+                    add {
+                        Seeded(
+                            "sourceFile(${quoted(it)})",
+                            handles(index.classesWithSourceFile(it)),
+                        )
+                    }
+                }
+            }
+        val seeds = selective.ifEmpty {
+            instanceFieldTypes.map {
+                {
+                    Seeded(
+                        "hasInstanceField($it)",
+                        handles(index.classesWithInstanceFieldType(it)),
+                    )
+                }
             }
         }
-        if (seeds.isEmpty()) {
-            return CandidatePool(
+        return QueryPlan(seeds, "class(es)", { handles -> handles.map(::DexClass) }) {
+            CandidatePool(
                 index.allClasses,
                 listOf(
                     "no selective constraints; considering all ${index.allClasses.size} classes"
@@ -81,7 +88,6 @@ internal class ClassQuerySpec : QuerySpec<DexClass, ClassRankScope>("class"), Cl
                 null,
             )
         }
-        return index.poolFromSeeds(seeds, "class(es)") { handles -> handles.map(::DexClass) }
     }
 
     override fun prefetch(runtime: PatchRuntime, candidates: List<DexClass>) =

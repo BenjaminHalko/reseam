@@ -121,69 +121,72 @@ internal class MethodQuerySpec : QuerySpec<Method, MethodRankScope>("method"), M
         predicates += predicate
     }
 
-    override fun candidates(runtime: PatchRuntime): CandidatePool<Method> {
+    override fun plan(runtime: PatchRuntime): QueryPlan<Method> {
         val index = runtime.index
-        val seeds = mutableListOf<Pair<String, Set<UInt>>>()
-        inClass?.let { target ->
-            val owner = runtime.resolve(target).value.descriptor
-            val declared = index.methodsInClass(owner, methodName)
-            val inherited = index.inheritedMethods(owner, methodName)
-            val label =
-                when {
-                    methodScope == MethodScope.INHERITED ->
-                        "inClass($owner) with ${inherited.size} inherited"
-                    inherited.isEmpty() -> "inClass($owner)"
-                    else ->
-                        "inClass($owner) declaring only; ${inherited.size} inherited method(s) need inClass(target, inherited = true)"
+        val owner = inClass?.let { runtime.resolve(it).value.descriptor }
+        val callTargets = calls.map { it() }
+        val callers = calledBy.map { runtime.resolve(it).value }
+        val selective =
+            buildList<() -> Seeded> {
+                owner?.let { owner -> add { classSeed(index, owner) } }
+                callers.forEach { caller ->
+                    add {
+                        Seeded(
+                            "calledBy(${caller.descriptor})",
+                            index.calleesOf(caller).map(Method::handle).toSet(),
+                        )
+                    }
                 }
-            val candidates =
-                if (methodScope == MethodScope.INHERITED) declared + inherited else declared
-            seeds += label to candidates.map(Method::handle).toSet()
-        }
-        calls.forEach { resolve ->
-            val ref = resolve()
-            seeds +=
-                "calls(${ref.descriptor})" to
-                    index
-                        .invokeSitesFor(MethodSignature(ref.definingClass, ref.name, ref.proto))
-                        .map { it.first }
-                        .toSet()
-        }
-        calledBy.forEach { target ->
-            val method = runtime.resolve(target).value
-            seeds +=
-                "calledBy(${method.descriptor})" to
-                    index.calleesOf(method).map(Method::handle).toSet()
-        }
-        if (stringValues.isNotEmpty()) {
-            seeds +=
-                "strings(${stringValues.joinToString(transform = ::quoted)})" to
-                    index.methodsWithStrings(stringValues)
-        }
-        stringPrefixes.forEach {
-            seeds += "stringsStartingWith(${quoted(it)})" to index.methodsWithStringPrefix(it)
-        }
-        literalValues.forEach { seeds += "literals($it)" to index.methodsWithLiteral(it) }
-        if (seeds.isEmpty()) {
-            callMatches.forEach { seeds += "calls(reference query)" to index.methodsCalling(it) }
-        }
-        if (seeds.isEmpty()) {
-            methodName?.let { seeds += "name($it)" to index.methodsWithName(it) }
-        }
-        if (seeds.isEmpty()) {
-            returnType?.let { seeds += "returns($it)" to index.methodsWithReturnType(it) }
-            parameterTypes?.let {
-                seeds += "params(${it.joinToString()})" to index.methodsWithExactParameters(it)
+                if (stringValues.isNotEmpty()) {
+                    add {
+                        Seeded(
+                            "strings(${stringValues.joinToString(transform = ::quoted)})",
+                            index.methodsWithStrings(stringValues),
+                        )
+                    }
+                }
+                callTargets.forEach { ref ->
+                    add {
+                        Seeded(
+                            "calls(${ref.descriptor})",
+                            index
+                                .invokeSitesFor(
+                                    MethodSignature(ref.definingClass, ref.name, ref.proto)
+                                )
+                                .map { it.first }
+                                .toSet(),
+                        )
+                    }
+                }
+                stringPrefixes.forEach {
+                    add {
+                        Seeded(
+                            "stringsStartingWith(${quoted(it)})",
+                            index.methodsWithStringPrefix(it),
+                        )
+                    }
+                }
+                literalValues.forEach {
+                    add { Seeded("literals($it)", index.methodsWithLiteral(it)) }
+                }
             }
-            hasParameters.forEach { seeds += "hasParam($it)" to index.methodsWithParameter(it) }
-            opcodes.forEach { seeds += "opcode($it)" to index.methodsWithOpcode(it) }
-            opcodeSequences.forEach {
-                seeds +=
-                    "opcodeSequence(${describeSequence(it)})" to index.methodsWithOpcodeSequence(it)
-            }
-        }
-        if (seeds.isEmpty()) {
-            return CandidatePool(
+        val seeds =
+            selective
+                .ifEmpty {
+                    callMatches.map {
+                        { Seeded("calls(reference query)", index.methodsCalling(it)) }
+                    }
+                }
+                .ifEmpty {
+                    listOfNotNull(
+                        methodName?.let { name ->
+                            { Seeded("name($name)", index.methodsWithName(name)) }
+                        }
+                    )
+                }
+                .ifEmpty { structuralSeeds(index) }
+        return QueryPlan(seeds, "method(s)", { handles -> handles.map(::Method) }) {
+            CandidatePool(
                 index.allMethods,
                 listOf(
                     "no selective constraints; considering all ${index.allMethods.size} methods"
@@ -193,7 +196,47 @@ internal class MethodQuerySpec : QuerySpec<Method, MethodRankScope>("method"), M
                 null,
             )
         }
-        return index.poolFromSeeds(seeds, "method(s)") { handles -> handles.map(::Method) }
+    }
+
+    private fun classSeed(index: SearchIndex, owner: String): Seeded {
+        val declared = index.methodsInClass(owner, methodName)
+        val inherited = index.inheritedMethods(owner, methodName)
+        val label =
+            when {
+                methodScope == MethodScope.INHERITED ->
+                    "inClass($owner) with ${inherited.size} inherited"
+                inherited.isEmpty() -> "inClass($owner)"
+                else ->
+                    "inClass($owner) declaring only; ${inherited.size} inherited method(s) need inClass(target, inherited = true)"
+            }
+        val candidates =
+            if (methodScope == MethodScope.INHERITED) declared + inherited else declared
+        return Seeded(label, candidates.map(Method::handle).toSet())
+    }
+
+    private fun structuralSeeds(index: SearchIndex): List<() -> Seeded> = buildList {
+        parameterTypes?.let { types ->
+            add {
+                Seeded("params(${types.joinToString()})", index.methodsWithExactParameters(types))
+            }
+        }
+        returnType?.let { type ->
+            add { Seeded("returns($type)", index.methodsWithReturnType(type)) }
+        }
+        hasParameters.forEach { type ->
+            add { Seeded("hasParam($type)", index.methodsWithParameter(type)) }
+        }
+        opcodeSequences.forEach { sequence ->
+            add {
+                Seeded(
+                    "opcodeSequence(${describeSequence(sequence)})",
+                    index.methodsWithOpcodeSequence(sequence),
+                )
+            }
+        }
+        opcodes.forEach { opcode ->
+            add { Seeded("opcode($opcode)", index.methodsWithOpcode(opcode)) }
+        }
     }
 
     override fun prefetch(runtime: PatchRuntime, candidates: List<Method>) =
@@ -212,9 +255,10 @@ internal class MethodQuerySpec : QuerySpec<Method, MethodRankScope>("method"), M
             return "defined by a bundle extension"
         methodName?.let { if (info.methodName != it) return "name mismatch" }
         if (stringValues.any { !index.methodHasString(value, it) }) return "missing required string"
-        if (stringPrefixes.any { value.handle !in index.methodsWithStringPrefix(it) })
+        if (stringPrefixes.any { !index.methodHasStringPrefix(value, it) })
             return "missing required string prefix"
-        if (literalValues.any { !value.containsLiteral(it) }) return "missing required literal"
+        if (literalValues.any { !index.methodHasLiteral(value, it) })
+            return "missing required literal"
         returnType?.let { if (value.returnType != it) return "return type mismatch" }
         parameterTypes?.let { if (value.parameterTypes != it) return "parameter type mismatch" }
         val params = value.parameterTypes
