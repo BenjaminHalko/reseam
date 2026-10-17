@@ -59,7 +59,7 @@ fn statuses(
     selection: &PatchSelection,
     package: &str,
     version: &str,
-) -> Vec<Status> {
+) -> Vec<(String, Status)> {
     let patches = noops(
         declarations
             .iter()
@@ -73,8 +73,15 @@ fn statuses(
     )
     .unwrap()
     .iter()
-    .map(|r| Status::from(&r.status))
+    .map(|r| (r.patch.clone(), Status::from(&r.status)))
     .collect()
+}
+
+fn covered(expected: &[(&str, Status)]) -> Vec<(String, Status)> {
+    expected
+        .iter()
+        .map(|&(id, status)| (format!("bundle/{id}"), status))
+        .collect()
 }
 
 #[test]
@@ -96,20 +103,29 @@ fn selection_presets_and_compatibility() {
     opted_in.compatibility = Compatibility::Universal;
     let patches = [&own, &pinned, &optional, &universal, &opted_in];
     for (selection, (package, expected)) in [
-        (PatchSelection::default(), ("com.example", [A, S, S, S, A])),
+        (
+            PatchSelection::default(),
+            (
+                "com.example",
+                &[("own", A), ("pinned", S), ("opted-in", A)][..],
+            ),
+        ),
         (
             PatchSelection {
                 ignore_versions: true,
                 ..Default::default()
             },
-            ("com.example", [A, A, S, S, A]),
+            ("com.example", &[("own", A), ("pinned", A), ("opted-in", A)]),
         ),
         (
             PatchSelection {
                 enable: vec!["universal".into()],
                 ..Default::default()
             },
-            ("com.example", [A, S, S, A, A]),
+            (
+                "com.example",
+                &[("own", A), ("pinned", S), ("universal", A), ("opted-in", A)],
+            ),
         ),
         (
             PatchSelection {
@@ -117,18 +133,24 @@ fn selection_presets_and_compatibility() {
                 disable: vec!["own".into()],
                 ..Default::default()
             },
-            ("com.example", [S, S, A, S, A]),
+            (
+                "com.example",
+                &[("own", S), ("pinned", S), ("optional", A), ("opted-in", A)],
+            ),
         ),
         (
             PatchSelection {
                 preset: PatchPreset::None,
                 ..Default::default()
             },
-            ("com.example", [S; 5]),
+            ("com.example", &[]),
         ),
-        (PatchSelection::default(), ("com.other", [S, S, S, S, A])),
+        (PatchSelection::default(), ("com.other", &[("opted-in", A)])),
     ] {
-        assert_eq!(statuses(&patches, &selection, package, "2.0"), expected);
+        assert_eq!(
+            statuses(&patches, &selection, package, "2.0"),
+            covered(expected)
+        );
     }
 }
 
@@ -142,26 +164,32 @@ fn dependency_selection_stops_at_unavailable_or_incompatible_nodes() {
     middle.enabled_by_default = false;
     let root = declared("bundle", "root", &["bundle/middle"]);
     for (selection, (package, expected)) in [
-        (PatchSelection::default(), ("com.example", [A, A, A])),
-        (PatchSelection::default(), ("com.other", [S; 3])),
+        (
+            PatchSelection::default(),
+            (
+                "com.example",
+                &[("helper", A), ("middle", A), ("root", A)][..],
+            ),
+        ),
+        (PatchSelection::default(), ("com.other", &[])),
         (
             PatchSelection {
                 disable: vec!["root".into()],
                 ..Default::default()
             },
-            ("com.example", [S; 3]),
+            ("com.example", &[("root", S)]),
         ),
         (
             PatchSelection {
                 disable: vec!["middle".into()],
                 ..Default::default()
             },
-            ("com.example", [S; 3]),
+            ("com.example", &[("middle", S), ("root", S)]),
         ),
     ] {
         assert_eq!(
             statuses(&[&helper, &middle, &root], &selection, package, "2.0"),
-            expected
+            covered(expected)
         );
     }
     middle.compatibility = [CompatiblePackage {
@@ -177,7 +205,7 @@ fn dependency_selection_stops_at_unavailable_or_incompatible_nodes() {
             "com.example",
             "2.0"
         ),
-        [S; 3]
+        covered(&[("middle", S), ("root", S)])
     );
     middle.dependencies.push("missing/helper".into());
     assert_eq!(
@@ -187,7 +215,7 @@ fn dependency_selection_stops_at_unavailable_or_incompatible_nodes() {
             "com.example",
             "2.0"
         ),
-        [S; 3]
+        covered(&[("middle", S), ("root", S)])
     );
 }
 

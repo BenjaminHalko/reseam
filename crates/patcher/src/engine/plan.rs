@@ -125,6 +125,8 @@ impl ResolvedPlan {
         }
 
         let options = resolve_options(patches, selection, &index, package, &desired, &disabled)?;
+        let order = order.into_iter().filter(|&idx| desired[idx]).collect();
+        let finalizers = finalizers.into_iter().filter(|&idx| desired[idx]).collect();
 
         Ok(Self {
             order,
@@ -141,6 +143,7 @@ impl ResolvedPlan {
         })
     }
 
+    /// The patches this run covers, in dependency order: the selection and the dependencies it needs.
     pub fn order(&self) -> &[usize] {
         &self.order
     }
@@ -151,10 +154,6 @@ impl ResolvedPlan {
 
     pub fn finalizers(&self) -> &[usize] {
         &self.finalizers
-    }
-
-    pub fn is_desired(&self, idx: usize) -> bool {
-        self.desired[idx]
     }
 
     pub fn required_by(&self, idx: usize) -> impl Iterator<Item = usize> + '_ {

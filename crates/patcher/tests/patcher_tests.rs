@@ -280,10 +280,7 @@ fn kotlin_bundle_executes_against_runtime_api() {
         statuses.get("runtime-test-bundle/app.reseam.test.dependentRuntime"),
         Some(&&PatchStatus::Applied)
     );
-    assert!(matches!(
-        statuses.get("runtime-test-bundle/app.reseam.test.requiredOption"),
-        Some(&PatchStatus::Skipped { .. })
-    ));
+    assert!(!statuses.contains_key("runtime-test-bundle/app.reseam.test.requiredOption"));
 
     assert_eq!(apk.version_name().as_deref(), Some("9.9-base"));
     assert_eq!(
@@ -332,7 +329,7 @@ fn kotlin_bundle_executes_against_runtime_api() {
 
 enum SelectionOutcome {
     Applied(&'static [&'static str]),
-    Skipped(&'static str),
+    NotRun(&'static str),
     MissingBundle,
     MissingOption,
 }
@@ -354,7 +351,7 @@ impl SelectionCase {
 }
 
 const SELECTION_CASES: [SelectionCase; 7] = [
-    SelectionCase::new(None, SelectionOutcome::Skipped("universalMarker")),
+    SelectionCase::new(None, SelectionOutcome::NotRun("universalMarker")),
     SelectionCase::new(
         Some("universal-marker"),
         SelectionOutcome::Applied(&["universalMarker"]),
@@ -363,7 +360,7 @@ const SELECTION_CASES: [SelectionCase; 7] = [
         Some("uses-internal"),
         SelectionOutcome::Applied(&["internalHelper", "usesInternal"]),
     ),
-    SelectionCase::new(None, SelectionOutcome::Skipped("needsOtherBundle")),
+    SelectionCase::new(None, SelectionOutcome::NotRun("needsOtherBundle")),
     SelectionCase::new(Some("needs-other-bundle"), SelectionOutcome::MissingBundle),
     SelectionCase::new(Some("required-option"), SelectionOutcome::MissingOption),
     SelectionCase {
@@ -415,16 +412,8 @@ fn kotlin_patch_selection_respects_dependencies_and_required_options() {
                         && bundle == "other-bundle")),
             SelectionOutcome::MissingOption => assert!(matches!(result,
                 Err(PatcherError::MissingRequiredOption { key, .. }) if key == "token")),
-            SelectionOutcome::Skipped(id) => {
-                let results = result.unwrap();
-                assert!(matches!(
-                    results
-                        .iter()
-                        .find(|item| item.patch.ends_with(id))
-                        .unwrap()
-                        .status,
-                    PatchStatus::Skipped { .. }
-                ));
+            SelectionOutcome::NotRun(id) => {
+                assert!(!result.unwrap().iter().any(|item| item.patch.ends_with(id)));
             }
             SelectionOutcome::Applied(ids) => {
                 let results = result.unwrap();

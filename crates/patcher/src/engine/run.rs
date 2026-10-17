@@ -177,9 +177,6 @@ impl<'a> Run<'a> {
         if self.plan.is_unmountable(idx) {
             return Some(unmountable_status());
         }
-        if !self.plan.is_desired(idx) {
-            return skipped("not selected".to_owned());
-        }
         if self.plan.is_disabled(idx) {
             return skipped("disabled explicitly".to_owned());
         }

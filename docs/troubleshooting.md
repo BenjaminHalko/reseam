@@ -39,7 +39,7 @@ The code you added needs more registers than the instructions around it can addr
 An `ExtClass` name has a typo, or the extension module isn't in the bundle. `reseam bundle list --verbose` shows the bundle's DEX files.
 
 **A patch is skipped**
-The log says why: the app or version doesn't match, the user didn't select it, or a dependency was skipped or failed.
+The log says why: the app or version doesn't match, the user turned it off, or a dependency was skipped or failed. Patches the user didn't select are not part of the run and don't appear.
 
 ## Loading the bundle
 
