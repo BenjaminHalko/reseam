@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,7 +16,6 @@ use super::jvm::{self, jvm_err};
 use super::metadata::{object, read_patch, string};
 use super::patch::load_class;
 use crate::bundle::BundleInfo;
-use crate::bundle::declarations::declarations;
 use crate::bundle::index::{Declaration, MemberKind};
 use crate::error::Result;
 use crate::patch::Patch;
@@ -87,12 +86,14 @@ pub(super) struct Found {
     pub(super) declaration: String,
 }
 
-pub fn load_patches(
+/// Loads the patches `declarations` names, by declaring class. Only those
+/// classes are initialized, so patches left out never run any code.
+pub(crate) fn load_patches(
     jars: &[PathBuf],
+    declarations: &BTreeMap<String, Vec<Declaration>>,
     directory: Arc<ScratchDir>,
     bundle: &BundleInfo,
 ) -> Result<Vec<Patch>> {
-    let declarations = declarations(jars)?;
     if declarations.is_empty() {
         return Ok(Vec::new());
     }
@@ -118,7 +119,7 @@ pub fn load_patches(
                 JClass::cast_local(env, class)?
             };
             let mut found = Vec::new();
-            for (class_name, declarations) in &declarations {
+            for (class_name, declarations) in declarations {
                 jvm::with_frame(env, |env| {
                     let class = {
                         let class = load_class(env, loader, class_name)?;

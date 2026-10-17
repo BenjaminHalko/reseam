@@ -53,6 +53,9 @@ pub enum PatcherError {
         bundle: String,
     },
 
+    #[error("patch {0} runs in this plan, but its code was not loaded")]
+    NotLoaded(String),
+
     #[error("unknown patch: {0}")]
     UnknownPatch(String),
 

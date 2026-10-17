@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -84,8 +85,9 @@ impl BundleArchive {
     }
 
     /// Extracts the payload, checking every file against the manifest, and
-    /// loads the patches it contains.
-    pub fn load(mut self) -> Result<PatchBundle> {
+    /// loads the code of the catalog patches whose ids are in `patches`. Only
+    /// their declaring classes are initialized; the rest of the bundle runs no code.
+    pub fn load(mut self, patches: &HashSet<String>) -> Result<PatchBundle> {
         info!(bundle = %self.manifest.bundle.name, "loading bundle");
         let extracted = Arc::new(
             ScratchDir::new("bundle")
@@ -143,16 +145,32 @@ impl BundleArchive {
         extension_dex.sort();
 
         #[cfg(feature = "bridge")]
-        let patches =
-            crate::kotlin::load_patches(&jars, Arc::clone(&extracted), &self.manifest.bundle)?;
+        let loaded = {
+            let mut declarations = super::declarations::declarations(&jars)?;
+            for members in declarations.values_mut() {
+                members.retain(|declaration| patches.contains(&declaration.id));
+            }
+            declarations.retain(|_, members| !members.is_empty());
+            crate::kotlin::load_patches(
+                &jars,
+                &declarations,
+                Arc::clone(&extracted),
+                &self.manifest.bundle,
+            )?
+        };
         #[cfg(not(feature = "bridge"))]
-        let patches = Vec::new();
+        let loaded = Vec::new();
 
-        let mut loaded: Vec<_> = patches.iter().map(crate::patch::Patch::spec).collect();
-        let mut declared: Vec<_> = self.manifest.patches.iter().collect();
-        loaded.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut loaded_specs: Vec<_> = loaded.iter().map(crate::patch::Patch::spec).collect();
+        let mut declared: Vec<_> = self
+            .manifest
+            .patches
+            .iter()
+            .filter(|spec| patches.contains(&spec.id))
+            .collect();
+        loaded_specs.sort_by(|a, b| a.id.cmp(&b.id));
         declared.sort_by(|a, b| a.id.cmp(&b.id));
-        if loaded != declared {
+        if loaded_specs != declared {
             return Err(bundle_error(
                 "loaded patch metadata differs from the signed catalog; rebuild the bundle",
             ));
@@ -160,14 +178,15 @@ impl BundleArchive {
 
         info!(
             bundle = %self.manifest.bundle.name,
-            patch_count = patches.len(),
+            patch_count = loaded.len(),
             extension_dex_count = extension_dex.len(),
             "bundle loaded"
         );
         Ok(PatchBundle {
             info: self.manifest.bundle,
             public_key: self.public_key,
-            patches,
+            catalog: self.manifest.patches,
+            patches: loaded,
             extension_dex,
             _extracted: extracted,
         })

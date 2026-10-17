@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::error::{HostError, Result, classify};
@@ -154,14 +155,47 @@ impl PreparedInspection {
         Ok(())
     }
 
-    pub(crate) fn load_bundles(self, trust: &TrustStore) -> Result<Vec<PatchBundle>> {
+    pub(crate) fn trusted_archives(self, trust: &TrustStore) -> Result<Vec<TrustedArchive>> {
         if self.archives.is_empty() {
             return Err(HostError::InvalidRequest("at least one bundle is required"));
         }
         self.archives
             .into_iter()
-            .map(|(path, archive)| load_archive(&path, archive?, trust))
+            .map(|(path, archive)| TrustedArchive::new(path, archive?, trust))
             .collect()
+    }
+}
+
+/// A bundle signed by a trusted key whose catalog is read and whose code is not loaded yet.
+pub(crate) struct TrustedArchive {
+    path: PathBuf,
+    archive: BundleArchive,
+}
+
+impl TrustedArchive {
+    fn new(path: PathBuf, archive: BundleArchive, trust: &TrustStore) -> Result<Self> {
+        if !trust.contains(archive.public_key()) {
+            return Err(Problem::UntrustedBundle {
+                path: path.display().to_string(),
+                public_key: hex::encode(archive.public_key()),
+            }
+            .into());
+        }
+        Ok(Self { path, archive })
+    }
+
+    pub(crate) fn catalog(&self) -> &[PatchSpec] {
+        self.archive.patches()
+    }
+
+    /// Loads the code of the catalog patches whose ids are in `patches`.
+    pub(crate) fn load(self, patches: &HashSet<String>) -> Result<PatchBundle> {
+        self.archive
+            .load(patches)
+            .map_err(|source| HostError::Bundle {
+                path: self.path,
+                source,
+            })
     }
 }
 
@@ -230,32 +264,15 @@ pub(crate) fn open_apk(
     })
 }
 
-/// Loads bundles signed by a key in `trust`; anything else is an error.
-pub fn load_bundles(paths: &[PathBuf], trust: &TrustStore) -> Result<Vec<PatchBundle>> {
+/// Opens bundles signed by a key in `trust`; anything else is an error.
+pub(crate) fn open_bundles(paths: &[PathBuf], trust: &TrustStore) -> Result<Vec<TrustedArchive>> {
     if paths.is_empty() {
         return Err(HostError::InvalidRequest("at least one bundle is required"));
     }
     paths
         .iter()
-        .map(|path| {
-            let archive = open_bundle(path)?;
-            load_archive(path, archive, trust)
-        })
+        .map(|path| TrustedArchive::new(path.clone(), open_bundle(path)?, trust))
         .collect()
-}
-
-fn load_archive(path: &Path, archive: BundleArchive, trust: &TrustStore) -> Result<PatchBundle> {
-    if !trust.contains(archive.public_key()) {
-        return Err(Problem::UntrustedBundle {
-            path: path.display().to_string(),
-            public_key: hex::encode(archive.public_key()),
-        }
-        .into());
-    }
-    archive.load().map_err(|source| HostError::Bundle {
-        path: path.to_owned(),
-        source,
-    })
 }
 
 fn open_bundle(path: &Path) -> Result<BundleArchive> {

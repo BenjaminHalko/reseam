@@ -11,6 +11,15 @@ use zip::write::SimpleFileOptions;
 
 use super::*;
 
+fn load_all(archive: BundleArchive) -> crate::error::Result<PatchBundle> {
+    let ids = archive
+        .patches()
+        .iter()
+        .map(|spec| spec.id.clone())
+        .collect();
+    archive.load(&ids)
+}
+
 #[test]
 #[expect(
     clippy::used_underscore_binding,
@@ -40,7 +49,7 @@ fn signed_bundles_keep_their_resources_and_version() {
         archive.files().collect::<Vec<_>>(),
         ["resources/drawable/icon.png"]
     );
-    let bundle = archive.load().unwrap();
+    let bundle = load_all(archive).unwrap();
     assert_eq!(
         std::fs::read(bundle._extracted.path().join("resources/drawable/icon.png")).unwrap(),
         resource
@@ -119,7 +128,7 @@ fn rejects_unverified_or_unsafe_resources() {
     ] {
         resource_archive(&path, name, b"resource", b"resource");
         assert!(
-            BundleArchive::open(&path).unwrap().load().is_err(),
+            load_all(BundleArchive::open(&path).unwrap()).is_err(),
             "{name}"
         );
     }
@@ -129,7 +138,7 @@ fn rejects_unverified_or_unsafe_resources() {
         b"expected",
         b"tampered",
     );
-    assert!(BundleArchive::open(&path).unwrap().load().is_err());
+    assert!(load_all(BundleArchive::open(&path).unwrap()).is_err());
 }
 
 #[cfg(all(feature = "kotlin", not(target_os = "android")))]
@@ -267,7 +276,7 @@ public final class Declarations {
             .archive(&[(Field, "zAlias"), (Field, "aAlias"), (Method, "getGood")])
             .unwrap();
         let catalog = archive.patches().to_vec();
-        let bundle = archive.load().unwrap();
+        let bundle = load_all(archive).unwrap();
         assert_eq!(bundle.patches().len(), 1);
         assert_eq!(catalog[0], *bundle.patches()[0].spec());
         assert_eq!(bundle.patches()[0].spec().id, "sample.aAlias");
@@ -276,11 +285,12 @@ public final class Declarations {
         assert!(path.join("patches.jar").is_file());
         drop(patches);
         assert!(!path.exists());
-        let repeated = fixture
-            .archive(&[(Method, "getFresh"), (Method, "getFresh")])
-            .unwrap()
-            .load()
-            .unwrap();
+        let repeated = load_all(
+            fixture
+                .archive(&[(Method, "getFresh"), (Method, "getFresh")])
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(repeated.patches().len(), 1);
         let published = std::fs::read(fixture.dir.path().join("example.reseam")).unwrap();
         for member in [
@@ -342,6 +352,6 @@ public final class Declarations {
         zip.finish().unwrap();
         let archive = BundleArchive::open(&path).unwrap();
         assert_eq!(archive.patches()[0].description, "Different metadata");
-        assert!(archive.load().is_err());
+        assert!(load_all(archive).is_err());
     }
 }

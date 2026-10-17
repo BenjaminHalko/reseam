@@ -4,6 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::engine::{Delivery, PatchSelection};
 use crate::error::PatcherError;
 use crate::patch::{Compatibility, CompatiblePackage, PatchPreset, PatchSpec};
 
@@ -47,11 +48,14 @@ fn declared(bundle: &str, id: &str, dependencies: &[&str]) -> PatchSpec {
     }
 }
 
-fn noops(declarations: impl IntoIterator<Item = PatchSpec>) -> Vec<Patch> {
-    declarations
-        .into_iter()
-        .map(|declaration| Patch::new(declaration, false, |_, _| Ok(())))
-        .collect()
+fn validate(
+    specs: &[&PatchSpec],
+    selection: &PatchSelection,
+    package: Option<&str>,
+    version: Option<&str>,
+) -> Result<Vec<PatchResult>> {
+    let plan = ResolvedPlan::resolve(specs, selection, Delivery::Install, package, version)?;
+    Ok(validate_patches(specs, &plan))
 }
 
 fn statuses(
@@ -60,21 +64,11 @@ fn statuses(
     package: &str,
     version: &str,
 ) -> Vec<(String, Status)> {
-    let patches = noops(
-        declarations
-            .iter()
-            .map(|declaration| (*declaration).clone()),
-    );
-    validate_patches(
-        &patches.iter().collect::<Vec<_>>(),
-        selection,
-        Some(package),
-        Some(version),
-    )
-    .unwrap()
-    .iter()
-    .map(|r| (r.patch.clone(), Status::from(&r.status)))
-    .collect()
+    validate(declarations, selection, Some(package), Some(version))
+        .unwrap()
+        .iter()
+        .map(|r| (r.patch.clone(), Status::from(&r.status)))
+        .collect()
 }
 
 fn covered(expected: &[(&str, Status)]) -> Vec<(String, Status)> {
@@ -224,14 +218,14 @@ fn reference_selection_disambiguates_bundles() {
     let official = declared("official", "helper", &[]);
     let fork = declared("fork", "helper", &[]);
     let consumer = declared("fork", "consumer", &["official/helper"]);
-    let patches = noops([official, fork, consumer]);
-    let patches: Vec<_> = patches.iter().collect();
+    let specs = [official, fork, consumer];
+    let specs: Vec<_> = specs.iter().collect();
     let selection = PatchSelection {
         preset: PatchPreset::None,
         enable: vec!["consumer".into()],
         ..Default::default()
     };
-    let results = validate_patches(&patches, &selection, Some("com.example"), None).unwrap();
+    let results = validate(&specs, &selection, Some("com.example"), None).unwrap();
     assert_eq!(
         results
             .iter()
@@ -245,7 +239,7 @@ fn reference_selection_disambiguates_bundles() {
         ..selection
     };
     assert!(matches!(
-        validate_patches(&patches, &selection, Some("com.example"), None),
+        validate(&specs, &selection, Some("com.example"), None),
         Err(PatcherError::InvalidSelection(_))
     ));
 }
@@ -254,14 +248,13 @@ fn reference_selection_disambiguates_bundles() {
 fn explicitly_selected_missing_dependencies_are_errors() {
     let consumer = declared("fork", "consumer", &["official/helper"]);
     let other = declared("official", "other", &[]);
-    for patches in [
+    for specs in [
         vec![consumer.clone()],
         vec![consumer.clone(), other.clone()],
     ] {
-        let patches = noops(patches);
-        let patches: Vec<_> = patches.iter().collect();
-        let results = validate_patches(
-            &patches,
+        let specs: Vec<_> = specs.iter().collect();
+        let results = validate(
+            &specs,
             &PatchSelection::default(),
             Some("com.example"),
             None,
@@ -273,7 +266,7 @@ fn explicitly_selected_missing_dependencies_are_errors() {
             ..Default::default()
         };
         assert!(matches!(
-            validate_patches(&patches, &selection, Some("com.example"), None),
+            validate(&specs, &selection, Some("com.example"), None),
             Err(PatcherError::MissingBundle { .. } | PatcherError::MissingDependency { .. })
         ));
     }
@@ -329,11 +322,21 @@ fn finalization_orders_hooks_and_emits_one_terminal_result() {
             events.clone(),
         );
         let mut finished = Vec::new();
-        let results = apply_patches(
-            &mut PatchContext::new(&mut apk),
-            &[&consumer, &dependency, &leaf],
+        let patches = [&consumer, &dependency, &leaf];
+        let specs: Vec<_> = patches.iter().map(|patch| patch.spec()).collect();
+        let plan = ResolvedPlan::resolve(
+            &specs,
             &PatchSelection::default(),
             Delivery::Install,
+            Some("com.example"),
+            Some("2.0"),
+        )
+        .unwrap();
+        let results = apply_patches(
+            &mut PatchContext::new(&mut apk),
+            &specs,
+            &plan,
+            &patches,
             |event| {
                 if let ProgressEvent::Finished { patch, status } = event {
                     events.lock().unwrap().push(format!("finished:{patch}"));

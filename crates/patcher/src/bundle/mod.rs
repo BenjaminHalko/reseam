@@ -208,11 +208,13 @@ fn check_info(info: &BundleInfo) -> crate::error::Result<()> {
     Ok(())
 }
 
-/// A loaded bundle. The payload lives in a scratch directory for as long as
-/// the bundle does, which is what keeps the patches' extension DEX readable.
+/// A loaded bundle: its signed catalog and the code of the patches a run asked
+/// for. The payload lives in a scratch directory for as long as the bundle
+/// does, which is what keeps the patches' extension DEX readable.
 pub struct PatchBundle {
     info: BundleInfo,
     public_key: [u8; 32],
+    catalog: Vec<PatchSpec>,
     patches: Vec<Patch>,
     extension_dex: Vec<PathBuf>,
     _extracted: std::sync::Arc<ScratchDir>,
@@ -227,6 +229,12 @@ impl PatchBundle {
         &self.public_key
     }
 
+    /// Every patch the bundle declares, in catalog order.
+    pub fn catalog(&self) -> &[PatchSpec] {
+        &self.catalog
+    }
+
+    /// The loaded patches, a subset of the catalog.
     pub fn patches(&self) -> &[Patch] {
         &self.patches
     }

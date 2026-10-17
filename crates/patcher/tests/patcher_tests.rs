@@ -227,8 +227,7 @@ fn manifest_contains_permission(apk: &ApkFile, permission: &str) -> bool {
 #[test]
 fn kotlin_bundle_executes_against_runtime_api() {
     let bundle_file = write_bundle_reseam();
-    let archive = BundleArchive::open(&bundle_file.path).unwrap();
-    let bundle = archive.load().unwrap();
+    let bundle = load_all(&bundle_file.path);
     let patches: Vec<&Patch> = bundle.patches().iter().collect();
     let (_apk_dir, mut apk) = open_split_test_apk();
     let mut ctx = PatchContext::new(&mut apk);
@@ -255,14 +254,7 @@ fn kotlin_bundle_executes_against_runtime_api() {
         ..Default::default()
     };
 
-    let results = engine::apply_patches(
-        &mut ctx,
-        &patches,
-        &selection,
-        engine::Delivery::Install,
-        |_| {},
-    )
-    .unwrap();
+    let results = apply(&mut ctx, &patches, &selection).unwrap();
 
     let statuses = results
         .iter()
@@ -397,13 +389,7 @@ fn kotlin_patch_selection_respects_dependencies_and_required_options() {
                 .collect(),
             ..Default::default()
         };
-        let result = engine::apply_patches(
-            &mut PatchContext::new(&mut apk),
-            &patches,
-            &selection,
-            engine::Delivery::Install,
-            |_| {},
-        );
+        let result = apply(&mut PatchContext::new(&mut apk), &patches, &selection);
         match expected {
             SelectionOutcome::MissingBundle => assert!(matches!(result,
                 Err(PatcherError::MissingBundle { patch, dependency, bundle })
@@ -532,14 +518,7 @@ fn kotlin_patch_failure(patch: &str, id: &str) -> PatchStatus {
         enable: [patch.to_string()].into(),
         ..Default::default()
     };
-    let results = engine::apply_patches(
-        &mut PatchContext::new(&mut apk),
-        &patches,
-        &selection,
-        engine::Delivery::Install,
-        |_| {},
-    )
-    .unwrap();
+    let results = apply(&mut PatchContext::new(&mut apk), &patches, &selection).unwrap();
     let result = results
         .iter()
         .find(|r| r.patch.ends_with(id))
@@ -876,10 +855,7 @@ fn replace_strings_containing_rewrites_only_what_transform_returns() {
 #[test]
 fn same_named_patches_keep_independent_identity_options_dependencies_and_settings() {
     let bundle_file = write_bundle_reseam();
-    let bundle = BundleArchive::open(&bundle_file.path)
-        .unwrap()
-        .load()
-        .unwrap();
+    let bundle = load_all(&bundle_file.path);
     let patches: Vec<&Patch> = bundle.patches().iter().collect();
     let first = "runtime-test-bundle/app.reseam.test.firstAds";
     let second = "runtime-test-bundle/app.reseam.test.secondAds";
@@ -897,14 +873,7 @@ fn same_named_patches_keep_independent_identity_options_dependencies_and_setting
         .into(),
         ..Default::default()
     };
-    let results = engine::apply_patches(
-        &mut PatchContext::new(&mut apk),
-        &patches,
-        &selection,
-        engine::Delivery::Install,
-        |_| {},
-    )
-    .unwrap();
+    let results = apply(&mut PatchContext::new(&mut apk), &patches, &selection).unwrap();
     let applied: Vec<_> = results
         .iter()
         .filter(|r| r.status == PatchStatus::Applied)
@@ -942,15 +911,13 @@ fn apply_fixture(apk: &mut ApkFile, name: &str, id: &str) {
 }
 
 fn run_one_patch(ctx: &mut PatchContext<'_>, patches: &[&Patch], name: &str, id: &str) {
-    let results = engine::apply_patches(
+    let results = apply(
         ctx,
         patches,
         &PatchSelection {
             enable: [name.to_string()].into(),
             ..Default::default()
         },
-        engine::Delivery::Install,
-        |_| {},
     )
     .unwrap();
     let applied = results
@@ -970,10 +937,35 @@ fn run_one_patch(ctx: &mut PatchContext<'_>, patches: &[&Patch], name: &str, id:
 }
 
 fn loaded_test_bundle() -> reseam_patcher::bundle::PatchBundle {
-    BundleArchive::open(&write_bundle_reseam().path)
-        .unwrap()
-        .load()
-        .unwrap()
+    load_all(&write_bundle_reseam().path)
+}
+
+/// Every patch of the bundle at `path`, so one load serves selections a test picks later.
+fn load_all(path: &Path) -> reseam_patcher::bundle::PatchBundle {
+    let archive = BundleArchive::open(path).unwrap();
+    let ids = archive
+        .patches()
+        .iter()
+        .map(|spec| spec.id.clone())
+        .collect();
+    archive.load(&ids).unwrap()
+}
+
+/// Plans `selection` for the APK in `ctx` and applies it, as a host run does.
+fn apply(
+    ctx: &mut PatchContext<'_>,
+    patches: &[&Patch],
+    selection: &PatchSelection,
+) -> reseam_patcher::error::Result<Vec<engine::PatchResult>> {
+    let specs: Vec<_> = patches.iter().map(|patch| patch.spec()).collect();
+    let plan = engine::ResolvedPlan::resolve(
+        &specs,
+        selection,
+        engine::Delivery::Install,
+        ctx.apk().package_name().as_deref(),
+        ctx.apk().version_name().as_deref(),
+    )?;
+    engine::apply_patches(ctx, &specs, &plan, patches, |_| {})
 }
 
 fn invoked_by(dex: &DexFile, owner: &str, name: &str) -> Vec<String> {
@@ -1093,15 +1085,13 @@ fn app_entry_fails_the_patch_when_the_manifest_names_no_application() {
     .unwrap()]);
     let bundle = loaded_test_bundle();
     let patches: Vec<&Patch> = bundle.patches().iter().collect();
-    let results = engine::apply_patches(
+    let results = apply(
         &mut PatchContext::new(&mut apk),
         &patches,
         &PatchSelection {
             enable: ["app-entry-hook".to_string()].into(),
             ..Default::default()
         },
-        engine::Delivery::Install,
-        |_| {},
     )
     .unwrap();
     let status = &results
@@ -1778,10 +1768,7 @@ fn instance_field_queries_read_lazy_fields_and_observe_edits() {
 #[test]
 fn settings_pages_merge_selected_contributions_and_keep_nested_ancestors() {
     let bundle_file = write_bundle_reseam();
-    let bundle = BundleArchive::open(&bundle_file.path)
-        .unwrap()
-        .load()
-        .unwrap();
+    let bundle = load_all(&bundle_file.path);
     let patches: Vec<&Patch> = bundle.patches().iter().collect();
     // Run twice against the same loaded host: pages from the first selection must not leak.
     for (patch, expected_pages, expected_keys) in [
@@ -1801,14 +1788,7 @@ fn settings_pages_merge_selected_contributions_and_keep_nested_ancestors() {
             enable: [format!("runtime-test-bundle/app.reseam.test.{patch}")].into(),
             ..Default::default()
         };
-        let results = engine::apply_patches(
-            &mut PatchContext::new(&mut apk),
-            &patches,
-            &selection,
-            engine::Delivery::Install,
-            |_| {},
-        )
-        .unwrap();
+        let results = apply(&mut PatchContext::new(&mut apk), &patches, &selection).unwrap();
         assert!(
             results
                 .iter()

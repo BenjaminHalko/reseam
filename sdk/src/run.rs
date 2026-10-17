@@ -3,16 +3,19 @@
 
 use crate::error::Result;
 use reseam_apk::ApkFile;
+use reseam_patcher::bundle::PatchBundle;
 use reseam_patcher::context::{ExtensionSet, PatchContext};
-use reseam_patcher::engine::{self, Delivery, PatchResult, PatchStatus};
+use reseam_patcher::engine::{self, Delivery, PatchResult, PatchStatus, ResolvedPlan};
 use reseam_patcher::{Patch, PatchSpec};
 
 use crate::TrustStore;
 use crate::error::Problem;
-use crate::inspect::{OpenedApk, PreparedInspection, load_bundles, open_apk};
+use crate::inspect::{OpenedApk, PreparedInspection, TrustedArchive, open_apk, open_bundles};
 use crate::metrics::{ApplyDiagnostics, PatchPhase, PatchProfiler};
 use crate::output::write_signed;
 use crate::{InstallMethod, PatchArtifact, PatchOutcome, PatchRequest, RunEvent};
+use std::borrow::Cow;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Runs the request end to end: open, load, apply, write, sign. A dry run
@@ -83,35 +86,32 @@ fn run(
     let output = request.output.resolve(opened.apk.components().len())?;
 
     emit(info("Loading bundles".to_string()));
-    let bundles = profiler.measure(PatchPhase::LoadBundles, || {
-        if let Some(prepared) = prepared {
-            return prepared.load_bundles(trust);
-        }
-        load_bundles(
+    let archives = match prepared {
+        Some(prepared) => prepared.trusted_archives(trust)?,
+        None => open_bundles(
             &request
                 .bundle_paths
                 .iter()
                 .map(PathBuf::from)
                 .collect::<Vec<_>>(),
             trust,
-        )
-    })?;
-    let patches: Vec<&Patch> = bundles
-        .iter()
-        .flat_map(|bundle| bundle.patches().iter())
-        .collect();
-
-    let specs: Vec<_> = patches.iter().map(|patch| patch.spec()).collect();
-    let selection = resolve(&specs, opened.apk.package_name().as_deref())?;
+        )?,
+    };
+    let package = opened.apk.package_name().map(Cow::into_owned);
+    let version = opened.apk.version_name().map(Cow::into_owned);
+    let specs: Vec<&PatchSpec> = archives.iter().flat_map(TrustedArchive::catalog).collect();
+    let selection = resolve(&specs, package.as_deref())?;
+    let plan = ResolvedPlan::resolve(
+        &specs,
+        &selection,
+        delivery(request.install_method, Vec::new()),
+        package.as_deref(),
+        version.as_deref(),
+    )?;
 
     if request.dry_run {
         let results = profiler.measure(PatchPhase::ValidatePatches, || {
-            engine::validate_patches(
-                &patches,
-                &selection,
-                opened.apk.package_name().as_deref(),
-                opened.apk.version_name().as_deref(),
-            )
+            Ok::<_, crate::HostError>(engine::validate_patches(&specs, &plan))
         })?;
         for result in &results {
             emit(RunEvent::PatchFinished {
@@ -123,16 +123,20 @@ fn run(
         return Ok((results, output));
     }
 
-    let extension_paths: Vec<_> = bundles
-        .iter()
-        .flat_map(|bundle| bundle.extension_dex().iter().cloned())
-        .collect();
+    let executed = executed_patches(&archives, &plan);
+    let bundles = profiler.measure(PatchPhase::LoadBundles, || {
+        archives
+            .into_iter()
+            .zip(&executed)
+            .map(|(archive, patches)| archive.load(patches))
+            .collect::<Result<Vec<_>>>()
+    })?;
     let results = apply(
         request,
         &mut opened,
-        &patches,
+        &bundles,
         &selection,
-        &extension_paths,
+        plan,
         emit,
         profiler,
     )?;
@@ -163,30 +167,56 @@ fn run(
     Ok((results, output))
 }
 
-/// Applies the selection to `opened`. A mount build that finds patches editing
-/// the manifest reopens the original input into `opened` and applies again
-/// without them, since the APK still holds their edits.
+/// The ids of the patches `plan` executes, per archive. Plan positions follow
+/// the archives' catalogs concatenated in order.
+fn executed_patches(archives: &[TrustedArchive], plan: &ResolvedPlan) -> Vec<HashSet<String>> {
+    let mut positions = 0..;
+    archives
+        .iter()
+        .map(|archive| {
+            archive
+                .catalog()
+                .iter()
+                .zip(positions.by_ref())
+                .filter(|&(_, idx)| plan.executes(idx))
+                .map(|(spec, _)| spec.id.clone())
+                .collect()
+        })
+        .collect()
+}
+
+fn delivery(method: InstallMethod, unmountable: Vec<String>) -> Delivery {
+    match method {
+        InstallMethod::Install => Delivery::Install,
+        InstallMethod::Mount => Delivery::Mount { unmountable },
+    }
+}
+
+/// Applies `plan` to `opened`. A mount build that finds patches editing the
+/// manifest reopens the original input into `opened` and applies again without
+/// them, since the APK still holds their edits. Each later plan covers a subset
+/// of the first, so the code loaded for it suffices.
 fn apply(
     request: &PatchRequest,
     opened: &mut OpenedApk,
-    patches: &[&Patch],
+    bundles: &[PatchBundle],
     selection: &reseam_model::PatchSelection,
-    extension_paths: &[PathBuf],
+    mut plan: ResolvedPlan,
     emit: &mut impl FnMut(RunEvent),
     profiler: &mut PatchProfiler,
 ) -> Result<Vec<PatchResult>> {
+    let specs: Vec<&PatchSpec> = bundles.iter().flat_map(PatchBundle::catalog).collect();
+    let patches: Vec<&Patch> = bundles.iter().flat_map(PatchBundle::patches).collect();
+    let extension_paths: Vec<_> = bundles
+        .iter()
+        .flat_map(|bundle| bundle.extension_dex().iter().cloned())
+        .collect();
     let mut unmountable = Vec::new();
     loop {
-        let delivery = match request.install_method {
-            InstallMethod::Install => Delivery::Install,
-            InstallMethod::Mount => Delivery::Mount {
-                unmountable: &unmountable,
-            },
-        };
         let mut ctx = PatchContext::new(&mut opened.apk);
-        ctx.set_extensions(ExtensionSet::load(extension_paths)?);
+        ctx.set_extensions(ExtensionSet::load(&extension_paths)?);
         let results = profiler.measure(PatchPhase::ApplyPatches, || {
-            engine::apply_patches(&mut ctx, patches, selection, delivery, |event| {
+            engine::apply_patches(&mut ctx, &specs, &plan, &patches, |event| {
                 emit(event.into());
             })
         })?;
@@ -207,6 +237,13 @@ fn apply(
             unmountable: unmountable.clone(),
         });
         *opened = profiler.measure(PatchPhase::OpenApk, || open_input(request))?;
+        plan = ResolvedPlan::resolve(
+            &specs,
+            selection,
+            delivery(request.install_method, unmountable.clone()),
+            opened.apk.package_name().as_deref(),
+            opened.apk.version_name().as_deref(),
+        )?;
     }
 }
 

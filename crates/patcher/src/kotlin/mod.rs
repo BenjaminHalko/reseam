@@ -41,11 +41,11 @@ mod xml_nodes;
 use boltffi::export;
 
 #[cfg(feature = "kotlin")]
-pub use loader::load_patches;
+pub(crate) use loader::load_patches;
 #[cfg(all(feature = "browser", not(feature = "kotlin")))]
 mod browser;
 #[cfg(all(feature = "browser", not(feature = "kotlin")))]
-pub use browser::load_patches;
+pub(crate) use browser::load_patches;
 
 #[export]
 pub fn ctx_is_active() -> bool {

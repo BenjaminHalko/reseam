@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -9,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use super::handles::{ContextGuard, RunningBundle};
 use crate::bundle::BundleInfo;
-use crate::bundle::declarations::declarations;
 use crate::bundle::index::Declaration;
 use crate::error::{PatcherError, Result};
 use crate::{Patch, PatchPhase, PatchSpec};
@@ -20,7 +20,7 @@ enum Request<'a> {
     Load {
         jars: &'a [PathBuf],
         bundle: &'a str,
-        declarations: Vec<Declaration>,
+        declarations: Vec<&'a Declaration>,
     },
     Invoke {
         handle: u32,
@@ -69,16 +69,19 @@ impl Drop for Loader {
     }
 }
 
-pub fn load_patches(
+pub(crate) fn load_patches(
     jars: &[PathBuf],
+    declarations: &BTreeMap<String, Vec<Declaration>>,
     directory: Arc<ScratchDir>,
     bundle: &BundleInfo,
 ) -> Result<Vec<Patch>> {
-    let declarations = declarations(jars)?.into_values().flatten().collect();
+    if declarations.is_empty() {
+        return Ok(Vec::new());
+    }
     let loaded: Loaded = serde_json::from_slice(&call(&Request::Load {
         jars,
         bundle: &bundle.name,
-        declarations,
+        declarations: declarations.values().flatten().collect(),
     })?)
     .map_err(json_error)?;
     let loader = Arc::new(Loader {

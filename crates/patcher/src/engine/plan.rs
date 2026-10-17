@@ -3,72 +3,107 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::PatchIndex;
+use super::{PatchIndex, PatchStatus};
 
+use crate::context::PatchContext;
 use crate::error::{PatcherError, Result};
 use crate::options::PatchOptions;
-use crate::patch::Patch;
+use crate::patch::PatchSpec;
 
 pub use reseam_model::PatchSelection;
 
+/// How a run's output reaches the device, which decides what a patch may change.
+#[derive(Debug, Clone)]
+pub enum Delivery {
+    /// The output installs as an app of its own.
+    Install,
+    /// The output replaces the installed app's files, and the system keeps the
+    /// manifest it read from the installed app. A patch that edits the manifest
+    /// finishes unmountable, and the patches that need it are skipped. The run
+    /// still holds that patch's edits, so the caller builds again from the
+    /// original APK with it listed in `unmountable`, which keeps it from running.
+    Mount { unmountable: Vec<String> },
+}
+
+impl Delivery {
+    fn unmountable(&self) -> &[String] {
+        match self {
+            Self::Install => &[],
+            Self::Mount { unmountable } => unmountable,
+        }
+    }
+
+    /// Whether the manifest changed since `revision` in a build that cannot apply it.
+    pub(super) fn forbids_manifest_edit(&self, revision: u64, ctx: &PatchContext<'_>) -> bool {
+        matches!(self, Self::Mount { .. }) && ctx.apk().manifest_revision() != revision
+    }
+}
+
+pub(super) const CHANGES_MANIFEST: &str = "changes the manifest, which a mount does not apply";
+
+pub(super) fn unmountable_status() -> PatchStatus {
+    PatchStatus::Unmountable {
+        reason: CHANGES_MANIFEST.to_owned(),
+    }
+}
+
+/// What a run of `specs` covers, decided from the patch declarations alone, so
+/// a host can load only the code of the patches it [executes](Self::executes).
+/// Indices are positions in the `specs` the plan was resolved from.
 #[derive(Debug)]
-pub(crate) struct ResolvedPlan {
+pub struct ResolvedPlan {
     order: Vec<usize>,
     finalizers: Vec<usize>,
     dependencies: Vec<Vec<usize>>,
     dependents: Vec<Vec<usize>>,
     selected: Vec<bool>,
     desired: Vec<bool>,
-    disabled: Vec<bool>,
-    unmountable: Vec<bool>,
-    unavailable: Vec<Option<String>>,
+    precluded: Vec<Option<PatchStatus>>,
+    executable: Vec<bool>,
     options: Vec<PatchOptions>,
-    ignore_versions: bool,
+    delivery: Delivery,
 }
 
 impl ResolvedPlan {
-    /// `unmountable` names patches an earlier mount build found changing the
-    /// manifest. They stay selected so the run can report them, but neither
-    /// they, the patches that need them, nor dependencies only those need will run.
+    /// Patches a mount delivery lists as unmountable stay selected so the run
+    /// can report them, but neither they, the patches that need them, nor
+    /// dependencies only those need will run.
     pub fn resolve(
-        patches: &[&Patch],
+        specs: &[&PatchSpec],
         selection: &PatchSelection,
-        unmountable: &[String],
+        delivery: Delivery,
         package: Option<&str>,
         version: Option<&str>,
     ) -> Result<Self> {
-        let specs: Vec<_> = patches.iter().map(|patch| patch.spec()).collect();
-        let index = PatchIndex::new(&specs)?;
+        let index = PatchIndex::new(specs)?;
         let DependencyGraph {
             dependencies,
             dependents,
             missing,
-        } = dependency_edges(patches, &index);
-        let order = topological_order(patches, &dependencies, &dependents)?;
-        let finalizers = topological_order(patches, &dependents, &dependencies)?;
+        } = dependency_edges(specs, &index);
+        let order = topological_order(specs, &dependencies, &dependents)?;
+        let finalizers = topological_order(specs, &dependents, &dependencies)?;
 
         let lookup = |patch: &String| index.resolve(patch, package);
         let enabled: HashSet<usize> = selection.enable.iter().map(lookup).collect::<Result<_>>()?;
         for &idx in &enabled {
             if let Some(missing) = &missing[idx] {
-                return Err(missing.error(patches[idx].reference().to_owned()));
+                return Err(missing.error(specs[idx].reference()));
             }
         }
         let unavailable: Vec<Option<String>> = missing
             .iter()
             .map(|missing| missing.as_ref().map(MissingDependency::skip_reason))
             .collect();
-        let roots: Vec<usize> = (0..patches.len())
-            .filter(|&i| {
-                enabled.contains(&i) || patches[i].spec().in_preset(selection.preset, package)
-            })
+        let roots: Vec<usize> = (0..specs.len())
+            .filter(|&i| enabled.contains(&i) || specs[i].in_preset(selection.preset, package))
             .collect();
-        let mut selected = vec![false; patches.len()];
+        let mut selected = vec![false; specs.len()];
         for &idx in &roots {
             selected[idx] = true;
         }
 
-        let mut disabled = vec![false; patches.len()];
+        let mut disabled = vec![false; specs.len()];
         for patch in &selection.disable {
             let idx = lookup(patch)?;
             if enabled.contains(&idx) {
@@ -79,8 +114,8 @@ impl ResolvedPlan {
             disabled[idx] = true;
         }
 
-        let mut excluded = vec![false; patches.len()];
-        for patch in unmountable {
+        let mut excluded = vec![false; specs.len()];
+        for patch in delivery.unmountable() {
             excluded[lookup(patch)?] = true;
         }
         let mut needs_excluded = excluded.clone();
@@ -90,43 +125,40 @@ impl ResolvedPlan {
                 .any(|&dependency| needs_excluded[dependency]);
         }
 
-        // A dependency is desired only while an applicable, enabled patch
-        // needs it. Selection roots remain desired so validation can report
-        // why they cannot run, but incompatibility or explicit disabling
-        // stops their dependency chain from propagating further.
-        let can_propagate = |idx: usize| {
-            if disabled[idx] || needs_excluded[idx] || unavailable[idx].is_some() {
-                return false;
-            }
-            let spec = patches[idx].spec();
-            if selection.ignore_versions {
-                spec.package_incompatibility(package).is_none()
-            } else {
-                spec.incompatibility(package, version).is_none()
-            }
-        };
-        let mut desired = selected.clone();
-        let mut expanded = vec![false; patches.len()];
-        let mut stack: Vec<usize> = roots
+        let precluded: Vec<Option<PatchStatus>> = specs
             .iter()
-            .copied()
-            .filter(|&idx| can_propagate(idx))
-            .collect();
-        while let Some(idx) = stack.pop() {
-            if std::mem::replace(&mut expanded[idx], true) {
-                continue;
-            }
-            for &dependency in &dependencies[idx] {
-                desired[dependency] = true;
-                if can_propagate(dependency) {
-                    stack.push(dependency);
+            .enumerate()
+            .map(|(idx, spec)| {
+                if excluded[idx] {
+                    return Some(unmountable_status());
                 }
-            }
-        }
+                let reason = if disabled[idx] {
+                    Some("disabled explicitly".to_owned())
+                } else if let Some(reason) = &unavailable[idx] {
+                    Some(reason.clone())
+                } else if selection.ignore_versions {
+                    spec.package_incompatibility(package)
+                } else {
+                    spec.incompatibility(package, version)
+                };
+                reason.map(|reason| PatchStatus::Skipped { reason })
+            })
+            .collect();
 
-        let options = resolve_options(patches, selection, &index, package, &desired, &disabled)?;
-        let order = order.into_iter().filter(|&idx| desired[idx]).collect();
+        let desired = desired_patches(&roots, &selected, &dependencies, |idx| {
+            precluded[idx].is_none() && !needs_excluded[idx]
+        });
+
+        let options = resolve_options(specs, selection, &index, package, &desired, &disabled)?;
+        let order: Vec<usize> = order.into_iter().filter(|&idx| desired[idx]).collect();
         let finalizers = finalizers.into_iter().filter(|&idx| desired[idx]).collect();
+        let mut executable = vec![false; specs.len()];
+        for &idx in &order {
+            executable[idx] = precluded[idx].is_none()
+                && dependencies[idx]
+                    .iter()
+                    .all(|&dependency| executable[dependency]);
+        }
 
         Ok(Self {
             order,
@@ -135,28 +167,34 @@ impl ResolvedPlan {
             dependents,
             selected,
             desired,
-            disabled,
-            unmountable: excluded,
-            unavailable,
+            precluded,
+            executable,
             options,
-            ignore_versions: selection.ignore_versions,
+            delivery,
         })
     }
 
+    /// Whether the run may execute the patch at `idx`: it is covered, and
+    /// neither it nor a dependency is ruled out before the run starts. A patch
+    /// that executes can still be skipped when a dependency fails during the run.
+    pub fn executes(&self, idx: usize) -> bool {
+        self.executable[idx]
+    }
+
     /// The patches this run covers, in dependency order: the selection and the dependencies it needs.
-    pub fn order(&self) -> &[usize] {
+    pub(crate) fn order(&self) -> &[usize] {
         &self.order
     }
 
-    pub fn dependencies(&self, idx: usize) -> &[usize] {
+    pub(crate) fn dependencies(&self, idx: usize) -> &[usize] {
         &self.dependencies[idx]
     }
 
-    pub fn finalizers(&self) -> &[usize] {
+    pub(crate) fn finalizers(&self) -> &[usize] {
         &self.finalizers
     }
 
-    pub fn required_by(&self, idx: usize) -> impl Iterator<Item = usize> + '_ {
+    pub(crate) fn required_by(&self, idx: usize) -> impl Iterator<Item = usize> + '_ {
         let dependents = if self.selected[idx] {
             &[][..]
         } else {
@@ -168,29 +206,53 @@ impl ResolvedPlan {
             .filter(|&dependent| self.desired[dependent])
     }
 
-    pub fn is_disabled(&self, idx: usize) -> bool {
-        self.disabled[idx]
+    /// Why the patch cannot run regardless of how its dependencies fare.
+    pub(crate) fn precluded(&self, idx: usize) -> Option<&PatchStatus> {
+        self.precluded[idx].as_ref()
     }
 
-    pub fn is_unmountable(&self, idx: usize) -> bool {
-        self.unmountable[idx]
-    }
-
-    pub fn unavailable(&self, idx: usize) -> Option<&str> {
-        self.unavailable[idx].as_deref()
-    }
-
-    pub fn options(&self, idx: usize) -> &PatchOptions {
+    pub(crate) fn options(&self, idx: usize) -> &PatchOptions {
         &self.options[idx]
     }
 
-    pub fn ignores_versions(&self) -> bool {
-        self.ignore_versions
+    pub(crate) fn delivery(&self) -> &Delivery {
+        &self.delivery
     }
 }
 
+/// The selection roots and the dependencies they need. A dependency is desired
+/// only while an applicable, enabled patch needs it. Selection roots remain
+/// desired so validation can report why they cannot run, but incompatibility or
+/// explicit disabling stops their dependency chain from propagating further.
+fn desired_patches(
+    roots: &[usize],
+    selected: &[bool],
+    dependencies: &[Vec<usize>],
+    can_propagate: impl Fn(usize) -> bool,
+) -> Vec<bool> {
+    let mut desired = selected.to_vec();
+    let mut expanded = vec![false; selected.len()];
+    let mut stack: Vec<usize> = roots
+        .iter()
+        .copied()
+        .filter(|&idx| can_propagate(idx))
+        .collect();
+    while let Some(idx) = stack.pop() {
+        if std::mem::replace(&mut expanded[idx], true) {
+            continue;
+        }
+        for &dependency in &dependencies[idx] {
+            desired[dependency] = true;
+            if can_propagate(dependency) {
+                stack.push(dependency);
+            }
+        }
+    }
+    desired
+}
+
 fn resolve_options(
-    patches: &[&Patch],
+    specs: &[&PatchSpec],
     selection: &PatchSelection,
     index: &PatchIndex<'_>,
     package: Option<&str>,
@@ -206,7 +268,7 @@ fn resolve_options(
         {
             return Err(PatcherError::InvalidSelection(format!(
                 "options for patch '{}' were supplied under multiple selectors",
-                patches[idx].reference()
+                specs[idx].reference()
             )));
         }
         if !desired[idx] || disabled[idx] {
@@ -215,18 +277,14 @@ fn resolve_options(
             )));
         }
     }
-    patches
+    specs
         .iter()
         .enumerate()
-        .map(|(idx, patch)| {
+        .map(|(idx, spec)| {
             if !desired[idx] || disabled[idx] {
                 return Ok(PatchOptions::default());
             }
-            PatchOptions::resolve(
-                patch.reference(),
-                &patch.spec().options,
-                configured.get(&idx),
-            )
+            PatchOptions::resolve(&spec.reference(), &spec.options, configured.get(&idx))
         })
         .collect()
 }
@@ -281,18 +339,18 @@ struct DependencyGraph {
     missing: Vec<Option<MissingDependency>>,
 }
 
-fn dependency_edges(patches: &[&Patch], index: &PatchIndex<'_>) -> DependencyGraph {
-    let mut dependencies = vec![Vec::new(); patches.len()];
-    let mut dependents = vec![Vec::new(); patches.len()];
-    let mut missing: Vec<Option<MissingDependency>> = (0..patches.len()).map(|_| None).collect();
-    for (idx, patch) in patches.iter().enumerate() {
-        for dependency in &patch.spec().dependencies {
+fn dependency_edges(specs: &[&PatchSpec], index: &PatchIndex<'_>) -> DependencyGraph {
+    let mut dependencies = vec![Vec::new(); specs.len()];
+    let mut dependents = vec![Vec::new(); specs.len()];
+    let mut missing: Vec<Option<MissingDependency>> = (0..specs.len()).map(|_| None).collect();
+    for (idx, spec) in specs.iter().enumerate() {
+        for dependency in &spec.dependencies {
             let Some(dependency_idx) = index.reference(dependency) else {
                 let bundle = dependency.split_once('/').map_or("", |(bundle, _)| bundle);
                 missing[idx].get_or_insert_with(|| MissingDependency {
                     dependency: dependency.clone(),
                     bundle: bundle.to_owned(),
-                    availability: if patches.iter().any(|patch| patch.spec().bundle == bundle) {
+                    availability: if specs.iter().any(|spec| spec.bundle == bundle) {
                         BundleAvailability::Loaded
                     } else {
                         BundleAvailability::Missing
@@ -312,13 +370,13 @@ fn dependency_edges(patches: &[&Patch], index: &PatchIndex<'_>) -> DependencyGra
 }
 
 fn topological_order(
-    patches: &[&Patch],
+    specs: &[&PatchSpec],
     dependencies: &[Vec<usize>],
     dependents: &[Vec<usize>],
 ) -> Result<Vec<usize>> {
     let mut in_degree: Vec<usize> = dependencies.iter().map(Vec::len).collect();
-    let mut queue: VecDeque<usize> = (0..patches.len()).filter(|&i| in_degree[i] == 0).collect();
-    let mut order = Vec::with_capacity(patches.len());
+    let mut queue: VecDeque<usize> = (0..specs.len()).filter(|&i| in_degree[i] == 0).collect();
+    let mut order = Vec::with_capacity(specs.len());
     while let Some(idx) = queue.pop_front() {
         order.push(idx);
         for &dependent in &dependents[idx] {
@@ -328,10 +386,10 @@ fn topological_order(
             }
         }
     }
-    if order.len() != patches.len() {
-        let names = (0..patches.len())
+    if order.len() != specs.len() {
+        let names = (0..specs.len())
             .filter(|&i| in_degree[i] > 0)
-            .map(|i| patches[i].reference().to_owned())
+            .map(|i| specs[i].reference())
             .collect();
         return Err(PatcherError::DependencyCycle(names));
     }

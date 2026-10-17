@@ -139,12 +139,12 @@ fn inspection_reads_signed_catalogs_without_loading_even_trusted_code() {
             [crate::PatchPreset::Recommended, crate::PatchPreset::All]
         );
         assert!(patch.incompatibility.is_some());
-        let error = crate::load_bundles(std::slice::from_ref(&path), &trust)
-            .err()
-            .unwrap();
-        if !trusted {
+        let opened = crate::inspect::open_bundles(std::slice::from_ref(&path), &trust);
+        if trusted {
+            assert!(opened.is_ok());
+        } else {
             assert!(matches!(
-                crate::error::classify(&error),
+                crate::error::classify(&opened.err().unwrap()),
                 Problem::UntrustedBundle { .. }
             ));
         }

@@ -1,86 +1,52 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::borrow::Cow;
+use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 
 use tracing::{info, info_span};
 
-use super::{PatchResult, PatchSelection, PatchStatus, ProgressEvent, ResolvedPlan};
+use super::plan::{CHANGES_MANIFEST, unmountable_status};
+use super::{PatchResult, PatchStatus, ProgressEvent, ResolvedPlan};
 use crate::context::PatchContext;
-use crate::error::Result;
+use crate::error::{PatcherError, Result};
 use crate::log::LogEntry;
-use crate::patch::{Patch, PatchPhase};
+use crate::patch::{Patch, PatchPhase, PatchSpec};
 
-/// How a run's output reaches the device, which decides what a patch may change.
-#[derive(Debug, Clone, Copy)]
-pub enum Delivery<'a> {
-    /// The output installs as an app of its own.
-    Install,
-    /// The output replaces the installed app's files, and the system keeps the
-    /// manifest it read from the installed app. A patch that edits the manifest
-    /// finishes unmountable, and the patches that need it are skipped. The run
-    /// still holds that patch's edits, so the caller builds again from the
-    /// original APK with it listed in `unmountable`, which keeps it from running.
-    Mount { unmountable: &'a [String] },
-}
-
-impl Delivery<'_> {
-    /// Whether the manifest changed since `revision` in a build that cannot apply it.
-    fn forbids_manifest_edit(self, revision: u64, ctx: &PatchContext<'_>) -> bool {
-        matches!(self, Self::Mount { .. }) && ctx.apk().manifest_revision() != revision
-    }
-}
-
-const CHANGES_MANIFEST: &str = "changes the manifest, which a mount does not apply";
-
-fn unmountable_status() -> PatchStatus {
-    PatchStatus::Unmountable {
-        reason: CHANGES_MANIFEST.to_owned(),
-    }
-}
-
-/// Runs the selected patches in dependency order, then the `after_dependents`
+/// Runs `plan` over `specs` in dependency order, then the `after_dependents`
 /// hook of every applied patch that finalizes, then binds the app entry hook to
-/// the final manifest. A patch that fails or panics does not stop the run;
-/// patches depending on it are skipped. Each patch is reported finished once its
-/// result is final: after execution, or after finalization when it finalizes.
+/// the final manifest. `patches` holds the code of at least every patch the
+/// plan executes. A patch that fails or panics does not stop the run; patches
+/// depending on it are skipped. Each patch is reported finished once its result
+/// is final: after execution, or after finalization when it finalizes.
 pub fn apply_patches(
     ctx: &mut PatchContext<'_>,
+    specs: &[&PatchSpec],
+    plan: &ResolvedPlan,
     patches: &[&Patch],
-    selection: &PatchSelection,
-    delivery: Delivery<'_>,
     mut observer: impl FnMut(ProgressEvent),
 ) -> Result<Vec<PatchResult>> {
     #[cfg(feature = "bridge")]
     let _bridge = crate::kotlin::handles::RunGuard::enter()?;
-    info!(patch_count = patches.len(), "starting patch application");
-    let package = ctx.apk().package_name().map(Cow::into_owned);
-    let version = ctx.apk().version_name().map(Cow::into_owned);
-    let unmountable = match delivery {
-        Delivery::Install => &[][..],
-        Delivery::Mount { unmountable } => unmountable,
-    };
-    let plan = ResolvedPlan::resolve(
-        patches,
-        selection,
-        unmountable,
-        package.as_deref(),
-        version.as_deref(),
-    )?;
-    let mut run = Run::new(patches, &plan);
+    info!(
+        patch_count = plan.order().len(),
+        "starting patch application"
+    );
+    let code = loaded_code(specs, plan, patches)?;
+    let mut run = Run::new(specs, plan, &code);
 
     for &idx in plan.order() {
-        let patch = &patches[idx];
-        let _span = info_span!("patch", patch = patch.reference()).entered();
-        if let Some(status) = run.blocked(idx, package.as_deref(), version.as_deref()) {
+        let reference = specs[idx].reference();
+        let _span = info_span!("patch", patch = reference.as_str()).entered();
+        if let Some(status) = run.blocked(idx) {
             run.finish(idx, status, Vec::new(), &mut observer);
             continue;
         }
+        let patch = code[idx].expect("loaded_code holds the code of every patch the plan executes");
 
-        ctx.begin_patch(patch.reference(), plan.options(idx).clone());
+        ctx.begin_patch(&reference, plan.options(idx).clone());
         observer(ProgressEvent::Started {
-            patch: patch.reference().to_owned(),
+            patch: reference.clone(),
         });
         let manifest = ctx.apk().manifest_revision();
         let outcome = guarded(|| patch.invoke(PatchPhase::Execute, ctx));
@@ -89,7 +55,7 @@ pub fn apply_patches(
             observer(ProgressEvent::Log(log.clone()));
         }
         let status = match outcome {
-            Ok(()) if delivery.forbids_manifest_edit(manifest, ctx) => unmountable_status(),
+            Ok(()) if plan.delivery().forbids_manifest_edit(manifest, ctx) => unmountable_status(),
             Ok(()) => PatchStatus::Applied,
             Err(reason) => PatchStatus::Failed { reason },
         };
@@ -97,8 +63,10 @@ pub fn apply_patches(
     }
 
     for &idx in plan.finalizers() {
-        let patch = patches[idx];
-        if !patch.finalizes() || !run.applied(idx) {
+        let Some(patch) = code[idx].filter(|patch| patch.finalizes()) else {
+            continue;
+        };
+        if !run.applied(idx) {
             continue;
         }
         let _span = info_span!("after_dependents", patch = patch.reference()).entered();
@@ -111,7 +79,7 @@ pub fn apply_patches(
         }
         run.append_logs(idx, logs);
         match outcome {
-            Ok(()) if delivery.forbids_manifest_edit(manifest, ctx) => {
+            Ok(()) if plan.delivery().forbids_manifest_edit(manifest, ctx) => {
                 run.set_status(idx, unmountable_status());
             }
             Ok(()) => {}
@@ -131,68 +99,71 @@ pub fn apply_patches(
     Ok(run.into_results())
 }
 
-/// The outcome of `apply_patches` without touching the APK: which patches
-/// would run and which would be skipped, given the selection and the app's
-/// package and version.
-pub fn validate_patches(
-    patches: &[&Patch],
-    selection: &PatchSelection,
-    package: Option<&str>,
-    version: Option<&str>,
-) -> Result<Vec<PatchResult>> {
-    let plan = ResolvedPlan::resolve(patches, selection, &[], package, version)?;
-    let mut run = Run::new(patches, &plan);
+/// The outcome of `plan` without touching the APK or loading patch code: which
+/// patches would run and which would be skipped.
+pub fn validate_patches(specs: &[&PatchSpec], plan: &ResolvedPlan) -> Vec<PatchResult> {
+    let code = vec![None; specs.len()];
+    let mut run = Run::new(specs, plan, &code);
     for &idx in plan.order() {
-        let status = run
-            .blocked(idx, package, version)
-            .unwrap_or(PatchStatus::Applied);
+        let status = run.blocked(idx).unwrap_or(PatchStatus::Applied);
         run.finish(idx, status, Vec::new(), &mut |_| {});
     }
-    Ok(run.into_results())
+    run.into_results()
+}
+
+/// The code of each patch in `specs`, by position, when `patches` holds it.
+fn loaded_code<'a>(
+    specs: &[&PatchSpec],
+    plan: &ResolvedPlan,
+    patches: &[&'a Patch],
+) -> Result<Vec<Option<&'a Patch>>> {
+    let by_reference: HashMap<&str, &'a Patch> = patches
+        .iter()
+        .map(|&patch| (patch.reference(), patch))
+        .collect();
+    specs
+        .iter()
+        .enumerate()
+        .map(|(idx, spec)| {
+            let reference = spec.reference();
+            match by_reference.get(reference.as_str()) {
+                Some(&patch) => Ok(Some(patch)),
+                None if plan.executes(idx) => Err(PatcherError::NotLoaded(reference)),
+                None => Ok(None),
+            }
+        })
+        .collect()
 }
 
 struct Run<'a> {
-    patches: &'a [&'a Patch],
+    specs: &'a [&'a PatchSpec],
     plan: &'a ResolvedPlan,
+    code: &'a [Option<&'a Patch>],
     results: Vec<Option<PatchResult>>,
 }
 
 impl<'a> Run<'a> {
-    fn new(patches: &'a [&'a Patch], plan: &'a ResolvedPlan) -> Self {
+    fn new(
+        specs: &'a [&'a PatchSpec],
+        plan: &'a ResolvedPlan,
+        code: &'a [Option<&'a Patch>],
+    ) -> Self {
         Self {
-            patches,
+            specs,
             plan,
-            results: (0..patches.len()).map(|_| None).collect(),
+            code,
+            results: (0..specs.len()).map(|_| None).collect(),
         }
     }
 
     /// Why the patch cannot run, as its final status, or `None` when it can.
-    fn blocked(
-        &self,
-        idx: usize,
-        package: Option<&str>,
-        version: Option<&str>,
-    ) -> Option<PatchStatus> {
+    fn blocked(&self, idx: usize) -> Option<PatchStatus> {
+        if let Some(status) = self.plan.precluded(idx) {
+            return Some(status.clone());
+        }
         let skipped = |reason: String| Some(PatchStatus::Skipped { reason });
-        if self.plan.is_unmountable(idx) {
-            return Some(unmountable_status());
-        }
-        if self.plan.is_disabled(idx) {
-            return skipped("disabled explicitly".to_owned());
-        }
-        if let Some(reason) = self.plan.unavailable(idx) {
-            return skipped(reason.to_owned());
-        }
-        let spec = self.patches[idx].spec();
-        if let Some(reason) = if self.plan.ignores_versions() {
-            spec.package_incompatibility(package)
-        } else {
-            spec.incompatibility(package, version)
-        } {
-            return skipped(reason);
-        }
         for &dependency in self.plan.dependencies(idx) {
-            let name = self.patches[dependency].reference();
+            let name = self.specs[dependency].reference();
             match self.results[dependency]
                 .as_ref()
                 .map(|result| &result.status)
@@ -227,19 +198,19 @@ impl<'a> Run<'a> {
         logs: Vec<LogEntry>,
         observer: &mut impl FnMut(ProgressEvent),
     ) {
-        let patch = self.patches[idx].reference().to_owned();
+        let spec = self.specs[idx];
         self.results[idx] = Some(PatchResult {
-            patch,
-            hidden: self.patches[idx].spec().hidden,
+            patch: spec.reference(),
+            hidden: spec.hidden,
             required_by: self
                 .plan
                 .required_by(idx)
-                .map(|dependent| self.patches[dependent].reference().to_owned())
+                .map(|dependent| self.specs[dependent].reference())
                 .collect(),
             status,
             logs,
         });
-        if !self.applied(idx) || !self.patches[idx].finalizes() {
+        if !self.applied(idx) || !self.code[idx].is_some_and(Patch::finalizes) {
             self.terminal(idx, observer);
         }
     }

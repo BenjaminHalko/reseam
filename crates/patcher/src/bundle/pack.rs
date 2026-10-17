@@ -60,10 +60,15 @@ pub fn pack(dir: &Path, version: Option<&str>, signing_key: &SigningKey, out: &P
         ..manifest.bundle
     };
     #[cfg(feature = "kotlin")]
-    let patches = crate::kotlin::load_patches(&jars, Arc::clone(&snapshot), &bundle)?
-        .iter()
-        .map(|patch| patch.spec().clone())
-        .collect();
+    let patches = crate::kotlin::load_patches(
+        &jars,
+        &super::declarations::declarations(&jars)?,
+        Arc::clone(&snapshot),
+        &bundle,
+    )?
+    .iter()
+    .map(|patch| patch.spec().clone())
+    .collect();
     #[cfg(not(feature = "kotlin"))]
     let patches = {
         if !jars.is_empty() {
