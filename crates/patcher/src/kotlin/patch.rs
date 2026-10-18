@@ -8,9 +8,11 @@ use jni::{Env, jni_sig, jni_str};
 
 use super::handles::ContextGuard;
 use super::jvm::{self, jvm_err};
+use super::savepoints::SavepointAction;
 use crate::context::PatchContext;
 use crate::error::Result;
 use crate::patch::PatchPhase;
+use reseam_journal::Savepoint;
 
 pub(super) struct KotlinCallback {
     object: Global<JObject<'static>>,
@@ -51,6 +53,9 @@ fn call_with_runtime(
         let class = load_class(env, loader, "app.reseam.patch.PatchRun")?;
         let class = JClass::cast_local(env, class)?;
         let object = env.new_object(class, jni_sig!("()V"), &[])?;
+        for savepoint in super::savepoints::open_savepoints() {
+            call_savepoint(env, &object, SavepointAction::Open, savepoint)?;
+        }
         Ok(env.new_global_ref(object)?)
     })?;
     let runtime_class = load_class(env, loader, "app.reseam.patch.PatchRuntime")?;
@@ -71,6 +76,43 @@ fn call_with_runtime(
     match (call, jvm::take_pending_exception(env)?) {
         (_, Some(exception)) => Err(jvm_err(format!("{method}(PatchRuntime): {exception}"))),
         (Err(e), None) => Err(jvm_err(format!("{method}(PatchRuntime): {e}"))),
+        (Ok(_), None) => Ok(()),
+    }
+}
+
+/// Tells the run's patch runtime about `savepoint`. Before a patch creates the
+/// runtime there is nothing to tell; it opens the savepoints open then.
+pub(super) fn savepoint(action: SavepointAction, savepoint: Savepoint) -> Result<()> {
+    let Some(run) = super::handles::existing_kotlin_run() else {
+        return Ok(());
+    };
+    jvm::get_or_init()?.attach_current_thread(|env| {
+        jvm::with_frame(env, |env| {
+            call_savepoint(env, run.as_ref().as_ref(), action, savepoint)
+        })
+    })
+}
+
+fn call_savepoint(
+    env: &mut Env<'_>,
+    run: &JObject<'_>,
+    action: SavepointAction,
+    savepoint: Savepoint,
+) -> Result<()> {
+    let method = match action {
+        SavepointAction::Open => jni_str!("openSavepoint"),
+        SavepointAction::Release => jni_str!("releaseSavepoint"),
+        SavepointAction::Rollback => jni_str!("rollbackTo"),
+    };
+    let call = env.call_method(
+        run,
+        method,
+        jni_sig!("(I)V"),
+        &[JValue::Int(savepoint.id() as i32)],
+    );
+    match (call, jvm::take_pending_exception(env)?) {
+        (_, Some(exception)) => Err(jvm_err(format!("PatchRun savepoint: {exception}"))),
+        (Err(e), None) => Err(jvm_err(format!("PatchRun savepoint: {e}"))),
         (Ok(_), None) => Ok(()),
     }
 }

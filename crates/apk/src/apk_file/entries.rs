@@ -58,15 +58,16 @@ impl ApkFile {
             let count = members.len();
             for (ordinal, dex) in members.into_iter().enumerate() {
                 if let Some(&index) = previous.get(ordinal) {
-                    self.dex.dex_files[index] = dex;
-                    self.dex_origins[index].kind = DexSource::Archive;
+                    self.replace_dex(index, dex, DexSource::Archive);
                 } else {
-                    self.dex.add_dex(dex);
-                    self.dex_origins.push(DexOrigin {
-                        component: ComponentIndex(component),
-                        name: name.into(),
-                        kind: DexSource::Archive,
-                    });
+                    self.push_dex(
+                        dex,
+                        DexOrigin {
+                            component: ComponentIndex(component),
+                            name: name.into(),
+                            kind: DexSource::Archive,
+                        },
+                    );
                 }
             }
             for index in previous.into_iter().skip(count) {
@@ -210,7 +211,6 @@ impl ApkFile {
 
     fn remove_dex_slot(&mut self, index: usize) {
         let header = self.dex.dex_files[index].header().clone();
-        self.dex.dex_files[index] = reseam_dex::DexFile::new(header);
-        self.dex_origins[index].kind = DexSource::Removed;
+        self.replace_dex(index, reseam_dex::DexFile::new(header), DexSource::Removed);
     }
 }

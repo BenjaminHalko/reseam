@@ -136,8 +136,9 @@ impl DexFile {
     }
 
     /// The classes a scan for `query` visits, in class order: every class for an
-    /// empty query, otherwise the index's matches, and for resident classes,
-    /// which the index does not cover, the methods their own references match.
+    /// empty query, otherwise the index's matches, for resident classes, which
+    /// the index does not cover, the methods their own references match, and
+    /// in full the file classes the index was built without.
     fn visits(&self, query: &RefQuery) -> Result<Vec<ClassVisit>> {
         let all = |class_idx| ClassVisit {
             class_idx,
@@ -146,16 +147,19 @@ impl DexFile {
         if query.is_empty() {
             return Ok((0..self.classes.len()).map(all).collect());
         }
-        let indexed = self
-            .ref_index()?
-            .matches(query)
-            .into_iter()
-            .filter_map(|m| {
-                (!self.classes.is_resident(m.class_idx)).then_some(ClassVisit {
-                    class_idx: m.class_idx,
-                    methods: Some(m.positions),
-                })
-            });
+        let index = self.ref_index()?;
+        let indexed = index.matches(query).into_iter().filter_map(|m| {
+            (!self.classes.is_resident(m.class_idx)).then_some(ClassVisit {
+                class_idx: m.class_idx,
+                methods: Some(m.positions),
+            })
+        });
+        let unindexed = index
+            .uncovered()
+            .iter()
+            .map(|&i| i as usize)
+            .filter(|&class_idx| !self.classes.is_resident(class_idx))
+            .map(all);
         let resident = self.classes.resident_indices().iter().filter_map(|&i| {
             let class_idx = i as usize;
             let positions = self.classes.resident_refs(class_idx)?.matching(query);
@@ -164,7 +168,7 @@ impl DexFile {
                 methods: Some(positions),
             })
         });
-        let mut visits: Vec<ClassVisit> = indexed.chain(resident).collect();
+        let mut visits: Vec<ClassVisit> = indexed.chain(unindexed).chain(resident).collect();
         visits.sort_unstable_by_key(|visit| visit.class_idx);
         Ok(visits)
     }

@@ -421,7 +421,7 @@ fn cached_reference_search_tracks_resident_edits_and_class_removal() -> TestResu
     dex.class_mut(class)?.add_direct_method(EncodedMethod {
         method,
         access_flags: AccessFlags::PUBLIC | AccessFlags::STATIC,
-        code: Some(CodeItem::new(
+        code: Some(std::sync::Arc::new(CodeItem::new(
             1,
             0,
             0,
@@ -429,7 +429,7 @@ fn cached_reference_search_tracks_resident_edits_and_class_removal() -> TestResu
                 Instruction::ConstString { dest: 0, string },
                 Instruction::ReturnVoid,
             ],
-        )?),
+        )?)),
     });
     let bytes = reseam_dex::write(&dex)?;
     let mut dex = common::parse_with_loading(&bytes, Loading::Deferred)?;

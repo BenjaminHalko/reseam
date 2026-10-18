@@ -101,6 +101,12 @@ impl<T: FileRecord> FileTable<T> {
         self.tail.push(record);
         index
     }
+
+    /// Drops the records pushed after the table held `len`.
+    pub(crate) fn truncate(&mut self, len: usize) {
+        assert!(len >= self.count, "only pushed records are truncated");
+        self.tail.truncate(len - self.count);
+    }
 }
 
 impl FileRecord for MethodHandle {

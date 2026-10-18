@@ -21,6 +21,7 @@ mod strings;
 #[cfg(test)]
 mod tests;
 mod type_lookups;
+mod undo;
 mod version;
 
 pub use classes::{ClassHeader, ClassTable, RawClassDef};
@@ -62,6 +63,7 @@ pub struct DexFile {
     type_lookups: type_lookups::TypeLookups,
     dirty: bool,
     write_options: crate::write::WriteOptions,
+    journal: reseam_journal::Journal<undo::DexPart, undo::DexUndo>,
 }
 
 impl DexFile {
@@ -83,6 +85,7 @@ impl DexFile {
             type_lookups: type_lookups::TypeLookups::default(),
             dirty: false,
             write_options: crate::write::WriteOptions::default(),
+            journal: reseam_journal::Journal::default(),
         }
     }
 
@@ -93,6 +96,9 @@ impl DexFile {
     /// Marks the DEX changed before granting mutation.
     pub fn header_mut(&mut self) -> &mut DexHeader {
         self.touch();
+        self.journal.record(undo::DexPart::Header, || {
+            undo::DexUndo::Header(self.header.clone())
+        });
         &mut self.header
     }
 
@@ -114,6 +120,9 @@ impl DexFile {
     pub fn set_write_options(&mut self, options: crate::write::WriteOptions) {
         if self.write_options != options {
             self.touch();
+            self.journal.record(undo::DexPart::WriteOptions, || {
+                undo::DexUndo::WriteOptions(self.write_options)
+            });
             self.write_options = options;
         }
     }
@@ -142,7 +151,12 @@ impl DexFile {
         self.dirty = false;
     }
 
+    /// Every change starts here, so the first one under a savepoint keeps the
+    /// lengths of the append-only pools as they were before it.
     pub(crate) fn touch(&mut self) {
+        let lens = self.pool_lens();
+        self.journal
+            .record(undo::DexPart::Pools, || undo::DexUndo::Pools(lens));
         if !self.dirty {
             tracing::debug!(file_size = self.header.file_size, "dex marked dirty");
         }

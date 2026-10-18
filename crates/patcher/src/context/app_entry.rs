@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::sync::Arc;
+
 use reseam_apk::reseam_dex::{AccessFlags, CodeItem, DexFile, EncodedMethod, Instruction, RegList};
 
 use super::{ClassLocation, MethodLocation, PatchContext};
@@ -46,7 +48,12 @@ impl PatchContext<'_> {
         class.add_direct_method(EncodedMethod {
             method,
             access_flags: AccessFlags::PUBLIC | AccessFlags::STATIC,
-            code: Some(CodeItem::new(1, 1, 0, vec![Instruction::ReturnVoid])?),
+            code: Some(Arc::new(CodeItem::new(
+                1,
+                1,
+                0,
+                vec![Instruction::ReturnVoid],
+            )?)),
         });
         Ok(MethodLocation {
             dex_idx: 0,
@@ -138,7 +145,7 @@ impl PatchContext<'_> {
             .add_virtual_method(EncodedMethod {
                 method,
                 access_flags: AccessFlags::PUBLIC,
-                code: Some(CodeItem::new(
+                code: Some(Arc::new(CodeItem::new(
                     1,
                     1,
                     1,
@@ -153,7 +160,7 @@ impl PatchContext<'_> {
                         },
                         Instruction::ReturnVoid,
                     ],
-                )?),
+                )?)),
             });
         Ok(())
     }

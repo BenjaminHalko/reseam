@@ -8,19 +8,27 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub(super) use super::handle_table::HandleSpace;
-use super::handle_table::HandleTable;
 #[cfg(feature = "kotlin")]
 use jni::objects::{Global, JObject};
-use reseam_apk::reseam_dex::{CodeItem, DexFile, EncodedMethod, Instruction};
-use rustc_hash::FxHashMap;
 
-use super::types::PoolOrigin;
+mod access;
+mod locations;
+
+pub(super) use access::{
+    log_mutation, method_ref, with_class_mut, with_code, with_instruction, with_method_mut,
+};
+pub(super) use locations::{
+    alloc_class, alloc_method, alloc_methods, class_location, forget_class, forget_method,
+    method_location, relocate_method, with_handles,
+};
+
+use super::pool_copies;
+pub(super) use super::pool_copies::{PoolKind, copied_pool, remember_pool};
 use super::xml;
-use reseam_apk::reseam_dex::MethodKind;
 
 use crate::error::{PatcherError, Result as PatcherResult};
 
-use crate::context::{ClassLocation, MethodLocation, PatchContext};
+use crate::context::PatchContext;
 pub(super) use crate::context::{code_mut, method_mut};
 
 thread_local! {
@@ -28,12 +36,10 @@ thread_local! {
     static KOTLIN_RUN: RefCell<Option<Arc<Global<JObject<'static>>>>> = const { RefCell::new(None) };
     static RUN_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static CTX_PTR: Cell<*mut ()> = const { Cell::new(std::ptr::null_mut()) };
-    static HANDLES: RefCell<HandleTable> = RefCell::new(HandleTable::default());
     static FAILURE: RefCell<Option<String>> = const { RefCell::new(None) };
     static REVISION: Cell<u64> = const { Cell::new(0) };
     static CHANGES: RefCell<VecDeque<MethodChange>> = const { RefCell::new(VecDeque::new()) };
     static STRUCTURAL_REVISION: Cell<u64> = const { Cell::new(0) };
-    static POOL_COPIES: RefCell<FxHashMap<PoolCopy, u32>> = RefCell::new(FxHashMap::default());
     static BUNDLE: RefCell<Option<RunningBundle>> = const { RefCell::new(None) };
 }
 
@@ -55,45 +61,6 @@ impl RunningBundle {
             directory,
         }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum PoolKind {
-    Handle,
-    CallSite,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct PoolCopy {
-    origin: PoolOrigin,
-    destination: u32,
-    kind: PoolKind,
-}
-
-pub(super) fn copied_pool(origin: PoolOrigin, destination: u32, kind: PoolKind) -> Option<u32> {
-    POOL_COPIES.with(|copies| {
-        copies
-            .borrow()
-            .get(&PoolCopy {
-                origin,
-                destination,
-                kind,
-            })
-            .copied()
-    })
-}
-
-pub(super) fn remember_pool(origin: PoolOrigin, destination: u32, kind: PoolKind, index: u32) {
-    POOL_COPIES.with(|copies| {
-        copies.borrow_mut().insert(
-            PoolCopy {
-                origin,
-                destination,
-                kind,
-            },
-            index,
-        )
-    });
 }
 
 pub(super) struct ContextGuard<'ctx, 'apk> {
@@ -121,6 +88,12 @@ impl Drop for RunGuard {
     }
 }
 
+/// The run's Kotlin patch runtime, once a patch has created it.
+#[cfg(feature = "kotlin")]
+pub(super) fn existing_kotlin_run() -> Option<Arc<Global<JObject<'static>>>> {
+    KOTLIN_RUN.with(|run| run.borrow().clone())
+}
+
 #[cfg(feature = "kotlin")]
 pub(super) fn kotlin_run(
     create: impl FnOnce() -> PatcherResult<Global<JObject<'static>>>,
@@ -140,8 +113,8 @@ fn reset() {
     super::hermes::reset();
     #[cfg(feature = "kotlin")]
     KOTLIN_RUN.with(|run| *run.borrow_mut() = None);
-    POOL_COPIES.with(|copies| copies.borrow_mut().clear());
-    HANDLES.with(|handles| *handles.borrow_mut() = HandleTable::default());
+    pool_copies::reset();
+    locations::reset();
     FAILURE.with(|failure| *failure.borrow_mut() = None);
     REVISION.with(|revision| revision.set(0));
     STRUCTURAL_REVISION.with(|revision| revision.set(0));
@@ -333,139 +306,4 @@ pub(super) fn with_running_bundle<R>(f: impl FnOnce(&RunningBundle) -> R) -> Res
             .map(f)
             .ok_or_else(|| "no patch is running on this thread".to_owned())
     })
-}
-
-pub(super) fn alloc_method(location: MethodLocation) -> u32 {
-    HANDLES.with(|h| h.borrow_mut().alloc_method(location))
-}
-
-pub(super) fn alloc_methods(locations: impl IntoIterator<Item = MethodLocation>) -> Vec<u32> {
-    HANDLES.with(|h| {
-        let mut h = h.borrow_mut();
-        locations.into_iter().map(|l| h.alloc_method(l)).collect()
-    })
-}
-
-pub(super) fn method_location(handle: u32) -> Option<MethodLocation> {
-    let location = HANDLES.with(|h| h.borrow().get_method(handle));
-    if location.is_none() {
-        record_failure(format!("invalid or removed method handle {handle}"));
-    }
-    location
-}
-
-pub(super) fn forget_method(location: MethodLocation) {
-    HANDLES.with(|h| h.borrow_mut().forget_method(location));
-    changed();
-}
-
-pub(super) fn relocate_method(old: MethodLocation, new: MethodLocation) {
-    HANDLES.with(|handles| handles.borrow_mut().relocate_method(old, new));
-    changed();
-}
-
-pub(super) fn forget_class(location: ClassLocation) {
-    HANDLES.with(|handles| handles.borrow_mut().forget_class(location));
-    changed();
-}
-
-pub(super) fn alloc_class(location: ClassLocation) -> u32 {
-    HANDLES.with(|h| h.borrow_mut().alloc_class(location))
-}
-
-pub(super) fn class_location(handle: u32) -> Option<ClassLocation> {
-    let location = HANDLES.with(|h| h.borrow().get_class(handle));
-    if location.is_none() {
-        record_failure(format!("invalid or removed class handle {handle}"));
-    }
-    location
-}
-
-pub(super) fn with_method<R>(
-    handle: u32,
-    f: impl FnOnce(&DexFile, &EncodedMethod) -> Option<R>,
-) -> Option<R> {
-    let location = method_location(handle)?;
-    with_ctx(|ctx| {
-        let (dex, method) = checked(ctx.read_method(location))?;
-        f(dex, method)
-    })
-}
-
-pub(super) fn with_code<R>(
-    handle: u32,
-    f: impl FnOnce(&DexFile, &CodeItem) -> Option<R>,
-) -> Option<R> {
-    with_method(handle, |dex, method| f(dex, method.code.as_ref()?))
-}
-
-pub(super) fn with_instruction<R>(
-    handle: u32,
-    index: u32,
-    f: impl FnOnce(&DexFile, &Instruction) -> Option<R>,
-) -> Option<R> {
-    with_method(handle, |dex, method| {
-        let instruction = method
-            .code
-            .as_ref()
-            .and_then(|code| code.instructions().get(index as usize));
-        let Some(instruction) = instruction else {
-            record_failure(format!(
-                "method {handle} has no instruction at index {index}"
-            ));
-            return None;
-        };
-        f(dex, instruction)
-    })
-}
-
-pub(super) fn with_method_mut<R>(
-    handle: u32,
-    f: impl FnOnce(&mut DexFile, MethodLocation) -> Result<Option<R>, String>,
-) -> Option<R> {
-    let location = method_location(handle)?;
-    method_changed(handle);
-    with_ctx(|ctx| {
-        let result = f(
-            checked(ctx.class_dex_mut(location.dex_idx, location.class_idx))?,
-            location,
-        );
-        log_mutation(ctx, result)
-    })
-}
-
-pub(super) fn with_class_mut<R>(
-    handle: u32,
-    f: impl FnOnce(&mut DexFile, ClassLocation) -> Result<Option<R>, String>,
-) -> Option<R> {
-    let location = class_location(handle)?;
-    changed();
-    with_ctx(|ctx| {
-        let result = f(
-            checked(ctx.class_dex_mut(location.dex_idx, location.class_idx))?,
-            location,
-        );
-        log_mutation(ctx, result)
-    })
-}
-
-pub(super) fn log_mutation<R>(
-    ctx: &mut PatchContext<'_>,
-    result: Result<Option<R>, String>,
-) -> Option<R> {
-    result.unwrap_or_else(|message| {
-        record_failure(&message);
-        ctx.log().warn(message);
-        None
-    })
-}
-
-pub(super) fn method_ref(dex: &DexFile, m: MethodLocation) -> Option<&EncodedMethod> {
-    let data = dex.resident_class(m.class_idx)?.class_data.as_ref()?;
-    let list = if m.kind == MethodKind::Virtual {
-        &data.virtual_methods
-    } else {
-        &data.direct_methods
-    };
-    list.get(m.method_idx)
 }

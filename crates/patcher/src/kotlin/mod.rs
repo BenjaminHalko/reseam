@@ -29,9 +29,11 @@ mod metadata;
 mod options;
 #[cfg(feature = "kotlin")]
 mod patch;
+mod pool_copies;
 mod pool_values;
 mod resource_files;
 mod resources;
+pub(crate) mod savepoints;
 pub mod types;
 mod xml;
 mod xml_attributes;

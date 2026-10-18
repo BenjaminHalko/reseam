@@ -26,23 +26,45 @@ pub(super) struct HermesSession {
     modules: BTreeMap<ModuleSource, ModuleId>,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum ModuleSource {
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(super) enum ModuleSource {
     AppRuntime,
     File(PathBuf),
 }
 
 impl HermesSession {
+    pub(super) fn open_savepoint(&mut self, savepoint: reseam_journal::Savepoint) {
+        self.edits_mut().open_savepoint(savepoint);
+    }
+
+    pub(super) fn release_savepoint(&mut self, savepoint: reseam_journal::Savepoint) {
+        self.edits_mut().release_savepoint(savepoint);
+    }
+
+    pub(super) fn rollback_to(&mut self, savepoint: reseam_journal::Savepoint) {
+        self.edits_mut().rollback_to(savepoint);
+    }
+
+    pub(super) fn forget_module(&mut self, source: &ModuleSource) {
+        self.modules.remove(source);
+    }
+
+    fn edits_mut(&mut self) -> &mut Edits {
+        self.edits
+            .as_mut()
+            .expect("a session holds its edits outside an edit")
+    }
+
     fn edit<T>(
         &mut self,
         action: impl FnOnce(&mut Editor<'_>, &FunctionIndex) -> Result<T>,
     ) -> Result<T> {
         let file = self.image.file();
-        let mut editor = if let Some(edits) = self.edits.take() {
-            Editor::resume(file, edits)?
-        } else {
-            Editor::new(file)
-        };
+        let edits = self
+            .edits
+            .take()
+            .expect("a session holds its edits outside an edit");
+        let mut editor = Editor::resume(file, edits)?;
         let outcome = action(&mut editor, &self.index);
         self.edits = Some(editor.into_edits());
         outcome
@@ -57,10 +79,14 @@ impl PatchContext<'_> {
             })?;
             let image = HermesImage::parse(Bytes::from_mmap(Arc::new(source)))?;
             let index = FunctionIndex::build(&image.file())?;
+            let mut edits = Editor::new(image.file()).into_edits();
+            self.journal
+                .savepoints()
+                .for_each(|savepoint| edits.open_savepoint(savepoint));
             self.hermes = Some(HermesSession {
                 image,
                 index,
-                edits: None,
+                edits: Some(edits),
                 modules: BTreeMap::new(),
             });
         }
@@ -118,7 +144,11 @@ impl PatchContext<'_> {
         let module = bytes(session.image.file().version())?;
         let module_file = HermesFile::parse(&module)?;
         let id = session.edit(|editor, index| Ok(editor.link(index, &module_file, imports)?))?;
-        session.modules.insert(source, id);
+        session.modules.insert(source.clone(), id);
+        self.journal
+            .record(super::undo::Part::Module(source.clone()), || {
+                super::undo::Undo::Module(source)
+            });
         Ok(id)
     }
 

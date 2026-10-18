@@ -68,7 +68,7 @@ pub fn dex() -> DexFile {
     class.add_direct_method(EncodedMethod {
         method: direct,
         access_flags: AccessFlags::PUBLIC | AccessFlags::STATIC,
-        code: Some(code.clone()),
+        code: Some(std::sync::Arc::new(code.clone())),
     });
     let mut virtual_code = code;
     virtual_code
@@ -80,7 +80,7 @@ pub fn dex() -> DexFile {
     class.add_virtual_method(EncodedMethod {
         method: virtual_method,
         access_flags: AccessFlags::PUBLIC,
-        code: Some(virtual_code),
+        code: Some(std::sync::Arc::new(virtual_code)),
     });
     dex
 }
@@ -96,10 +96,7 @@ pub fn direct_method(dex: &mut DexFile) -> &mut EncodedMethod {
 }
 
 pub fn body(dex: &mut DexFile) -> &mut CodeItem {
-    direct_method(dex)
-        .code
-        .as_mut()
-        .expect("fixture method body")
+    direct_method(dex).code_mut().expect("fixture method body")
 }
 
 pub fn parse_with_loading(

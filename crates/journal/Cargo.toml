@@ -1,0 +1,12 @@
+[package]
+name = "reseam-journal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Savepoints and undo records for state a patch run may take back"
+
+[dependencies]
+rustc-hash = { workspace = true }
+
+[lints]
+workspace = true

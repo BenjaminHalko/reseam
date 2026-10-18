@@ -33,7 +33,7 @@ pub enum PatchStatus {
     Skipped {
         reason: String,
     },
-    /// Left out of a mount build because the patch changes the manifest.
+    /// Left out of a mount build because the patch changes the manifest; the run undid it.
     Unmountable {
         reason: String,
     },
@@ -45,7 +45,16 @@ pub enum PatchStatus {
 #[derive(Debug, Clone)]
 #[boltffi::data]
 pub enum ProgressEvent {
-    Started { patch: String },
+    Started {
+        patch: String,
+    },
     Log(LogEntry),
-    Finished { patch: String, status: PatchStatus },
+    Finished {
+        patch: String,
+        status: PatchStatus,
+    },
+    /// Finished patches whose results no longer hold; they run again.
+    Reverted {
+        patches: Vec<String>,
+    },
 }

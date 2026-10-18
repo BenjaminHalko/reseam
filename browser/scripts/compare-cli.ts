@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 import { parseJson, stringifyJson } from '../src/json';
 
-interface Case { id: string; apk: string; splits?: string[]; selection?: Record<string, unknown> }
+interface Case { id: string; apk: string; splits?: string[]; selection?: Record<string, unknown>; request?: Record<string, unknown> }
 interface Matrix { bundle: string; key: string; cert: string; trust: string; apps: Case[] }
 if (!process.env.MATRIX_PATH) throw new Error('Set MATRIX_PATH to the real-app comparison configuration');
 const matrix = parseJson<Matrix>(await Bun.file(process.env.MATRIX_PATH).text());
@@ -51,6 +51,7 @@ try {
       apk_path: resolve(app.apk), split_paths: (app.splits ?? []).map(path => resolve(path)),
       bundle_paths: [resolve(matrix.bundle)], trust: { keys: [matrix.trust] }, selection,
       output: { kind: 'split_dir', path: nativeOutput }, signing: { key: resolve(matrix.key), cert: resolve(matrix.cert) },
+      ...app.request,
     };
     console.log(`${app.id}: patching with CLI`);
     const started = performance.now();
@@ -76,7 +77,7 @@ try {
       await page.locator('#splits').setInputFiles((app.splits ?? []).map(path => resolve(path)));
       await page.locator('#bundles').setInputFiles(resolve(matrix.bundle));
       await page.locator('#key').setInputFiles(resolve(matrix.key)); await page.locator('#cert').setInputFiles(resolve(matrix.cert));
-      const result = await page.evaluate(async ({ selection, trust, trace, profileBridge }) => {
+      const result = await page.evaluate(async ({ selection, extra, trust, trace, profileBridge }) => {
         const selected = (id: string) => [...((document.getElementById(id) as HTMLInputElement).files ?? [])];
         const apk = selected('apk')[0], bundles = selected('bundles'), splits = selected('splits');
         const files = [...[apk, ...splits, ...bundles].map(file => ({ name: file.name, file })),
@@ -92,7 +93,7 @@ try {
           const patchStarted = performance.now();
           const outcome = await session.patch({ apk_path: apkPath, split_paths: splitPaths, bundle_paths: bundlePaths,
             trust: { keys: [trust] }, selection, output: { kind: 'split_dir', path: '/output/patched' },
-            signing: { key: '/identity/reseam.pk8', cert: '/identity/reseam.der' } });
+            signing: { key: '/identity/reseam.pk8', cert: '/identity/reseam.der' }, ...extra });
           const patchWallMs = Math.round(performance.now() - patchStarted);
           const artifacts = await session.artifacts();
           for (const artifact of artifacts) {
@@ -102,7 +103,7 @@ try {
           }
           return { inspection, outcome, patchWallMs, totalWallMs: Math.round(performance.now() - started), wasmMemoryBytes: session.wasmMemoryBytes };
         } finally { await session.dispose(); }
-      }, { selection, trust: matrix.trust, trace: process.env.TRACE_NATIVE === '1', profileBridge: process.env.PROFILE_BRIDGE === '1' });
+      }, { selection, extra: app.request ?? {}, trust: matrix.trust, trace: process.env.TRACE_NATIVE === '1', profileBridge: process.env.PROFILE_BRIDGE === '1' });
       row.browser = result;
       await Bun.write(resolve(directory, 'browser-result.json'), stringifyJson(result));
       const comparison = Bun.spawn(['python3', resolve(import.meta.dir, 'compare-apks.py'), nativeOutput, destination], { stdout: 'pipe', stderr: 'pipe' });

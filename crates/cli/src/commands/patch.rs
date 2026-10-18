@@ -90,11 +90,8 @@ fn log_event(event: RunEvent, hidden: &HashSet<String>) {
             PatchStatus::Unmountable { reason } => info!(patch, reason, "patch left out of mount"),
             PatchStatus::Failed { reason } => error!(patch, reason, "patch failed"),
         },
-        RunEvent::Restarted { unmountable } => {
-            info!(
-                ?unmountable,
-                "patching again from the original APK without unmountable patches"
-            );
+        RunEvent::PatchesReverted { patches } => {
+            info!(?patches, "patches undone to run again");
         }
         RunEvent::PatchLog(entry) => match entry.level {
             LogLevel::Debug => debug!(patch = entry.patch, "{}", entry.message),
@@ -142,6 +139,7 @@ pub(crate) fn request(args: &PatchRequestArgs, output: PatchOutput) -> Result<Pa
         } else {
             InstallMethod::Install
         },
+        leave_out_failed: args.leave_out_failed,
     })
 }
 

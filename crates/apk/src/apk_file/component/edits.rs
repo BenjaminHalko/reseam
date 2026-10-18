@@ -84,9 +84,12 @@ impl ApkComponent {
             None
         };
         if let Some(manifest) = manifest {
+            self.keep_manifest();
             self.manifest = manifest;
+            self.manifest_revision += 1;
         }
         if let Some(resources) = resources {
+            self.keep_resources();
             self.resources = Resources::Loaded(Box::new(resources));
         }
         let compression = if is_native_library(path) {
@@ -94,8 +97,7 @@ impl ApkComponent {
         } else {
             compression
         };
-        self.edits
-            .insert(path.into(), EntryEdit::Staged { file, compression });
+        self.set_edit(path.into(), EntryEdit::Staged { file, compression });
         Ok(())
     }
 
@@ -107,14 +109,15 @@ impl ApkComponent {
             ));
         }
         if path == RESOURCES_ENTRY {
+            self.keep_resources();
             self.resources = Resources::Absent;
         }
-        self.edits.insert(path.into(), EntryEdit::Deleted);
+        self.set_edit(path.into(), EntryEdit::Deleted);
         Ok(())
     }
 
     pub(in crate::apk_file) fn add_dex_entry(&mut self, name: &str) {
-        self.edits.insert(name.into(), EntryEdit::Dex);
+        self.set_edit(name.into(), EntryEdit::Dex);
     }
 
     /// How the DEX entry `name` is stored: as the archive holds it, or for a

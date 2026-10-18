@@ -61,6 +61,7 @@ impl ApkFile {
             dex,
             dex_origins,
             scratch: None,
+            journal: reseam_journal::Journal::default(),
         };
         info!(
             package = apk.package_name().as_deref(),

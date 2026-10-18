@@ -42,7 +42,7 @@ class HermesScope internal constructor() {
 }
 
 /** The app modules extensions import, by specifier, declared for the rest of the run. */
-class AppModules internal constructor() {
+class AppModules internal constructor(private val journal: RunJournal) {
     private val modules = mutableMapOf<String, MetroModule>()
     private val prefixes = mutableMapOf<String, (String) -> MetroModule>()
 
@@ -50,6 +50,7 @@ class AppModules internal constructor() {
     fun module(specifier: String, module: MetroModule) {
         val previous = modules.putIfAbsent(specifier, module)
         require(previous == null || previous === module) { "$specifier is declared twice" }
+        if (previous == null) journal.record { modules.remove(specifier) }
     }
 
     /**
@@ -59,17 +60,21 @@ class AppModules internal constructor() {
     fun prefix(prefix: String, module: (path: String) -> MetroModule) {
         val previous = prefixes.putIfAbsent(prefix, module)
         require(previous == null || previous === module) { "$prefix is declared twice" }
+        if (previous == null) journal.record { prefixes.remove(prefix) }
     }
 
     internal fun resolve(specifier: String): MetroModule =
         modules.getOrPut(specifier) {
-            prefixes.entries
-                .firstOrNull { (prefix, _) -> specifier.startsWith(prefix) }
-                ?.let { (prefix, module) -> module(specifier.removePrefix(prefix)) }
-                ?: error(
-                    "No app module is declared for the import $specifier; depend on the patch " +
-                        "that declares the app's modules"
-                )
+            val module =
+                prefixes.entries
+                    .firstOrNull { (prefix, _) -> specifier.startsWith(prefix) }
+                    ?.let { (prefix, module) -> module(specifier.removePrefix(prefix)) }
+                    ?: error(
+                        "No app module is declared for the import $specifier; depend on the patch " +
+                            "that declares the app's modules"
+                    )
+            journal.record { modules.remove(specifier) }
+            module
         }
 }
 

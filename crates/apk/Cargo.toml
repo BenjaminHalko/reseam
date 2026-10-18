@@ -8,6 +8,7 @@ readme = "README.md"
 
 [dependencies]
 reseam-storage = { workspace = true }
+reseam-journal = { workspace = true }
 reseam-model = { workspace = true }
 reseam-dex = { workspace = true }
 rustc-hash = { workspace = true }

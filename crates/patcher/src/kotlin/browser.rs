@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use reseam_journal::Savepoint;
 use reseam_storage::ScratchDir;
 use serde::{Deserialize, Serialize};
 
 use super::handles::{ContextGuard, RunningBundle};
+use super::savepoints::SavepointAction;
 use crate::bundle::BundleInfo;
 use crate::bundle::index::Declaration;
 use crate::error::{PatcherError, Result};
@@ -30,6 +33,40 @@ enum Request<'a> {
     Close {
         handle: u32,
     },
+    Savepoint {
+        handle: u32,
+        action: Action,
+        savepoint: u32,
+    },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Action {
+    Open,
+    Release,
+    Rollback,
+}
+
+thread_local! {
+    /// The loaders open in this host, each with its own patch runtime.
+    static LOADERS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Tells every loader's patch runtime about `savepoint`.
+pub(super) fn savepoint(action: SavepointAction, savepoint: Savepoint) -> Result<()> {
+    for handle in LOADERS.with(|loaders| loaders.borrow().clone()) {
+        call(&Request::Savepoint {
+            handle,
+            action: match action {
+                SavepointAction::Open => Action::Open,
+                SavepointAction::Release => Action::Release,
+                SavepointAction::Rollback => Action::Rollback,
+            },
+            savepoint: savepoint.id(),
+        })?;
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -61,6 +98,7 @@ struct Loader {
 
 impl Drop for Loader {
     fn drop(&mut self) {
+        LOADERS.with(|loaders| loaders.borrow_mut().retain(|&handle| handle != self.handle));
         if let Err(error) = call(&Request::Close {
             handle: self.handle,
         }) {
@@ -84,6 +122,7 @@ pub(crate) fn load_patches(
         declarations: declarations.values().flatten().collect(),
     })?)
     .map_err(json_error)?;
+    LOADERS.with(|loaders| loaders.borrow_mut().push(loaded.handle));
     let loader = Arc::new(Loader {
         handle: loaded.handle,
         name: bundle.name.clone(),

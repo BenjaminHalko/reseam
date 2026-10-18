@@ -22,7 +22,8 @@ The types come from [`crates/model`](../crates/model/).
 | `encodeSelection`, `encodePatchMetadata` | Store a selection or patch list as JSON, with matching `decode` functions. |
 
 - **Trust.** A request lists the bundle signers it accepts in `trust.keys`. The SDK trusts no one on its own. `inspect` reads bundles from any signer and marks each one `trusted` or not; `patch` refuses untrusted ones.
-- **Mount builds.** `installMethod = MOUNT` builds output to mount over the installed app. Patches that edit the manifest finish `Unmountable`; when a run finds one, the SDK sends `RunEvent.Restarted` and patches again from the original input without it.
+- **Mount builds.** `installMethod = MOUNT` builds output to mount over the installed app. A patch that edits the manifest finishes `Unmountable`, and the run undoes it as it undoes a patch that fails: the output is what the run would have made without it. When undoing reaches patches already reported finished, the SDK sends `RunEvent.PatchesReverted` with them, and they run again.
+- **Failed patches.** By default a patch that fails fails the run with `PatchesFailed`. With `leaveOutFailed`, the SDK writes the output anyway: the run undoes each failed patch and leaves out the patches that need it, so the output is what it would have made had they not been selected. Their results say why.
 - **Errors.** Failures are `SdkError` with a typed `Problem`, such as `UntrustedBundle`, `EngineTooOld`, or `PatchesFailed`.
 - **Threads.** Calls are synchronous; run them off the main thread. `onEvent` runs on the calling thread and must not call back into the SDK.
 - **Lifetimes.** `ApkInspection` component paths are valid until it is closed. A `PreparedInspection` needs the same input paths, in the same order, when you call `patch`, and the inputs must not change before then. `patch` consumes it, even on failure.

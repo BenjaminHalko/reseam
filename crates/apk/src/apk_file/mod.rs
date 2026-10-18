@@ -8,6 +8,7 @@ mod open;
 pub(crate) use open::validate_components;
 mod entries;
 mod presentation;
+mod undo;
 mod write;
 
 use std::borrow::Cow;
@@ -32,6 +33,7 @@ pub struct ApkFile {
     dex: MultiDexContainer,
     dex_origins: Vec<DexOrigin>,
     pub(crate) scratch: Option<reseam_storage::ScratchDir>,
+    journal: reseam_journal::Journal<undo::Part, undo::Undo>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -135,12 +137,14 @@ impl ApkFile {
             .collect();
         let name = crate::entry::next_free_dex_name(&mut used);
         self.components[0].add_dex_entry(name.as_str());
-        self.dex.add_dex(dex);
-        self.dex_origins.push(DexOrigin {
-            component: ComponentIndex(0),
-            name,
-            kind: DexSource::Added,
-        });
+        self.push_dex(
+            dex,
+            DexOrigin {
+                component: ComponentIndex(0),
+                name,
+                kind: DexSource::Added,
+            },
+        );
     }
 
     pub fn is_added_dex(&self, index: usize) -> bool {

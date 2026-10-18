@@ -210,6 +210,10 @@ impl PatchContext<'_> {
                 Some(index) => self.merge_extension(index),
                 None => {
                     if self.extensions.warned.insert(class.to_owned()) {
+                        self.journal
+                            .record(super::undo::Part::Warned(class.to_owned()), || {
+                                super::undo::Undo::Warned(class.to_owned())
+                            });
                         self.log().warn(format!(
                             "{class} is not defined by the app or any extension in the bundle"
                         ));
@@ -246,7 +250,25 @@ impl PatchContext<'_> {
                     })
                     .filter(|&provider| provider != index),
             );
+            let dex_index = self.apk.dex().len();
+            self.journal.record(super::undo::Part::Merge(index), || {
+                super::undo::Undo::Merged {
+                    extension: index,
+                    dex: dex_index,
+                }
+            });
             self.apk_mut().add_dex(dex);
         }
+    }
+}
+
+impl ExtensionSet {
+    /// Takes back extension `index`, which a rollback removed from the app.
+    pub(super) fn restore(&mut self, index: usize, dex: DexFile) {
+        self.files[index].file = Some(dex);
+    }
+
+    pub(super) fn forget_warning(&mut self, class: &str) {
+        self.warned.remove(class);
     }
 }

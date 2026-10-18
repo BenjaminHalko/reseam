@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::sync::Arc;
+
 use super::access_flags::AccessFlags;
 use super::annotation::AnnotationsDirectory;
 use super::code::CodeItem;
@@ -87,42 +89,44 @@ pub struct EncodedField {
     pub access_flags: AccessFlags,
 }
 
+/// A method of a class. Copies of a class share method bodies until one of
+/// them changes a body, so keeping a class as it was costs only what changed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EncodedMethod {
     pub method: MethodIdx,
     pub access_flags: AccessFlags,
-    pub code: Option<CodeItem>,
+    pub code: Option<Arc<CodeItem>>,
 }
 
 impl EncodedMethod {
     pub fn code(&self) -> Option<&CodeItem> {
-        self.code.as_ref()
+        self.code.as_deref()
     }
 
     pub fn code_mut(&mut self) -> Option<&mut CodeItem> {
-        self.code.as_mut()
+        self.code.as_mut().map(Arc::make_mut)
     }
 
     pub fn return_early(&mut self) {
-        if let Some(code) = self.code.as_mut() {
+        if let Some(code) = self.code_mut() {
             code.return_early();
         }
     }
 
     pub fn return_early_int(&mut self, value: i32) {
-        if let Some(code) = self.code.as_mut() {
+        if let Some(code) = self.code_mut() {
             code.return_early_int(value);
         }
     }
 
     pub fn return_early_object(&mut self, value: i32) {
-        if let Some(code) = self.code.as_mut() {
+        if let Some(code) = self.code_mut() {
             code.return_early_object(value);
         }
     }
 
     pub fn return_early_wide(&mut self, value: i64) {
-        if let Some(code) = self.code.as_mut() {
+        if let Some(code) = self.code_mut() {
             code.return_early_wide(value);
         }
     }

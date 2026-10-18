@@ -37,6 +37,10 @@ pub struct TrustArgs {
 }
 
 #[derive(Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent command-line switches"
+)]
 pub struct PatchRequestArgs {
     pub apk: PathBuf,
     #[arg(long = "split")]
@@ -67,6 +71,9 @@ pub struct PatchRequestArgs {
     /// Build output to mount over the installed app, leaving out patches that change the manifest.
     #[arg(long)]
     pub mount: bool,
+    /// Write the output without patches that fail, and the patches that need them.
+    #[arg(long)]
+    pub leave_out_failed: bool,
 }
 
 #[derive(Args)]

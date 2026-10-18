@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::sync::Arc;
+
+mod frame;
+
 use super::logged;
 use crate::context::{ClassLocation, MethodLocation};
 use crate::kotlin::handles::{
@@ -9,10 +13,11 @@ use crate::kotlin::handles::{
 use crate::kotlin::link::{link_descriptors, link_instructions, proto_types};
 use crate::kotlin::types::NewMethod;
 use boltffi::export;
+use frame::prepare_flag_frame;
 use reseam_apk::reseam_dex::MethodKind;
 use reseam_apk::reseam_dex::{
-    AccessFlags, CatchHandler as DexCatchHandler, ClassDef, DexFile, EncodedMethod,
-    TryItem as DexTryItem, TypedCatch as DexTypedCatch,
+    AccessFlags, CatchHandler as DexCatchHandler, ClassDef, EncodedMethod, TryItem as DexTryItem,
+    TypedCatch as DexTypedCatch,
 };
 
 #[export]
@@ -107,7 +112,7 @@ pub fn add_method(c: u32, method: NewMethod) -> u32 {
         let encoded = EncodedMethod {
             method: method_idx,
             access_flags: flags,
-            code,
+            code: code.map(Arc::new),
         };
         Ok(push_method(
             logged("add method", dex.class_mut(loc.class_idx))?,
@@ -190,11 +195,11 @@ pub fn set_method_access_flags(
         let method = logged("access method", crate::context::method_mut(dex, loc))?
             .ok_or_else(|| format!("method handle {m} is missing"))?;
         let (id, previous_flags) = (method.method, method.access_flags);
-        let mut code = method.code.take();
+        let mut code = method.code.take().map(Arc::unwrap_or_clone);
         let frame = prepare_flag_frame(dex, id, previous_flags, flags, &mut code);
         logged("restore method", crate::context::method_mut(dex, loc))?
             .expect("frame preparation leaves the method slot in place")
-            .code = code;
+            .code = code.map(Arc::new);
         let mapping = frame?;
         let class = logged("change method flags", dex.class_mut(loc.class_idx))?;
         let data = class
@@ -228,50 +233,6 @@ pub fn set_method_access_flags(
     });
     crate::kotlin::handles::check_call()?;
     outcome.ok_or_else(|| format!("method handle {m} could not be changed"))
-}
-
-fn prepare_flag_frame(
-    dex: &DexFile,
-    method: reseam_apk::reseam_dex::MethodIdx,
-    previous: AccessFlags,
-    flags: AccessFlags,
-    code: &mut Option<reseam_apk::reseam_dex::CodeItem>,
-) -> Result<Option<crate::kotlin::types::MethodEdit>, String> {
-    if flags.intersects(AccessFlags::ABSTRACT | AccessFlags::NATIVE) {
-        *code = None;
-        return Ok(None);
-    }
-    let Some(code) = code.as_mut() else {
-        return Ok(None);
-    };
-    let proto = dex.proto_descriptor(&dex.proto(dex.method_id(method).proto));
-    let incoming = logged(
-        "change method frame",
-        crate::kotlin::invoke::incoming_words(&proto, flags),
-    )?;
-    let growth = incoming.saturating_sub(code.registers_size());
-    let mapping = if growth == 0 {
-        None
-    } else {
-        let types = super::registers::incoming_types(dex, method, previous);
-        let mut mapping = super::mutation::edit_mapping(logged(
-            "grow receiver frame",
-            reseam_apk::reseam_dex::types::register_allocation::grow_registers(
-                code,
-                growth,
-                &types,
-                &[],
-                dex,
-            ),
-        )?)?;
-        mapping.register_shift = growth;
-        Some(mapping)
-    };
-    logged(
-        "change method frame",
-        code.set_register_frame(code.registers_size(), incoming, code.outs_size()),
-    )?;
-    Ok(mapping)
 }
 
 #[export]

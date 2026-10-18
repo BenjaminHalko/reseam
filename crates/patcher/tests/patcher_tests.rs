@@ -965,7 +965,46 @@ fn apply(
         ctx.apk().package_name().as_deref(),
         ctx.apk().version_name().as_deref(),
     )?;
-    engine::apply_patches(ctx, &specs, &plan, patches, |_| {})
+    engine::apply_patches(ctx, &specs, plan, patches, |_| {})
+}
+
+#[test]
+fn a_patch_taken_back_takes_back_what_it_registered_for_a_finalizer() {
+    let bundle_file = write_bundle_reseam();
+    let bundle = load_all(&bundle_file.path);
+    let patches: Vec<&Patch> = bundle.patches().iter().collect();
+    let selection = PatchSelection {
+        preset: PatchPreset::None,
+        enable: ["registers-and-fails", "registers-and-applies"]
+            .map(String::from)
+            .into(),
+        ..Default::default()
+    };
+    for _ in 0..2 {
+        let (_apk_dir, mut apk) = open_split_test_apk();
+        let results = apply(&mut PatchContext::new(&mut apk), &patches, &selection).unwrap();
+        let status = |id: &str| {
+            results
+                .iter()
+                .find(|result| result.patch == format!("runtime-test-bundle/app.reseam.test.{id}"))
+                .map(|result| std::mem::discriminant(&result.status))
+        };
+        assert_eq!(
+            status("registersAndFails"),
+            Some(std::mem::discriminant(&PatchStatus::Failed {
+                reason: String::new()
+            }))
+        );
+        assert_eq!(
+            status("registersAndApplies"),
+            Some(std::mem::discriminant(&PatchStatus::Applied))
+        );
+        assert_eq!(
+            apk.read_component_entry(0, "assets/registrations.txt")
+                .unwrap(),
+            Some(b"applied".to_vec())
+        );
+    }
 }
 
 fn invoked_by(dex: &DexFile, owner: &str, name: &str) -> Vec<String> {
@@ -1558,6 +1597,7 @@ fn patched_code(apk: &ApkFile, owner: &str, name: &str) -> reseam_apk::reseam_de
     read_method(&written_dex(apk, 0), owner, name)
         .unwrap()
         .code
+        .map(std::sync::Arc::unwrap_or_clone)
         .unwrap()
 }
 

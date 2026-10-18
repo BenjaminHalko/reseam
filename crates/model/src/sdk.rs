@@ -112,6 +112,12 @@ pub struct PatchRequest {
     #[serde(default)]
     #[boltffi::default(InstallMethod::Install)]
     pub install_method: InstallMethod,
+    /// Writes the output without the patches that failed, and the patches that
+    /// need them, instead of failing the run. The run undoes a failed patch, so
+    /// the output is what it would have made had the patch not been selected.
+    #[serde(default)]
+    #[boltffi::default(false)]
+    pub leave_out_failed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,10 +214,10 @@ pub enum RunEvent {
         patch: String,
         status: PatchStatus,
     },
-    /// A mount build found patches that change the manifest. The run starts
-    /// over from the original APK and leaves out every patch in `unmountable`.
-    Restarted {
-        unmountable: Vec<String>,
+    /// Finished patches whose results no longer hold: a patch that ran before
+    /// them could not apply, so the run went back to before it. They run again.
+    PatchesReverted {
+        patches: Vec<String>,
     },
 }
 
@@ -221,6 +227,7 @@ impl From<ProgressEvent> for RunEvent {
             ProgressEvent::Started { patch } => Self::PatchStarted { patch },
             ProgressEvent::Log(entry) => Self::PatchLog(entry),
             ProgressEvent::Finished { patch, status } => Self::PatchFinished { patch, status },
+            ProgressEvent::Reverted { patches } => Self::PatchesReverted { patches },
         }
     }
 }

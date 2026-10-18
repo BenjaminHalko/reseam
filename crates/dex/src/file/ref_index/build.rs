@@ -73,6 +73,7 @@ pub(super) fn build(dex: &DexFile) -> Result<RefIndex> {
     );
     Ok(RefIndex {
         class_start: refs.class_start,
+        uncovered: dex.classes.resident_indices().to_vec(),
         keys,
         pools,
         literal_values,

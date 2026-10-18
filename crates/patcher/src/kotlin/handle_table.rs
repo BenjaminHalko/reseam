@@ -5,8 +5,12 @@ use super::handles::record_failure;
 use crate::context::{ClassLocation, MethodLocation};
 use crate::error::{PatcherError, Result as PatcherResult};
 use reseam_apk::reseam_dex::MethodKind;
-use rustc_hash::FxHashMap;
+use reseam_journal::Savepoint;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+mod slots;
+
+use slots::Handles;
 
 const CLASS_REMOVED: u64 = 1 << 32;
 const INVALID_HANDLE: u32 = u32::MAX;
@@ -54,76 +58,7 @@ pub(crate) struct HandleTable {
     classes: Handles,
 }
 
-#[derive(Default)]
-struct Handles {
-    identities: HandleSpace,
-    keys: Vec<u64>,
-    sorted_len: usize,
-    index: FxHashMap<u64, u32>,
-    relocated: FxHashMap<u32, u64>,
-}
-
 const METHOD_REMOVED: u64 = 1 << 17;
-
-impl Handles {
-    fn alloc(&mut self, key: u64, removed_bit: u64) -> u32 {
-        if let Some(&h) = self.index.get(&key) {
-            return h;
-        }
-        let sorted = &self.keys[..self.sorted_len];
-        let first = sorted.partition_point(|held| held & !removed_bit < key);
-        if let Some(offset) = sorted[first..]
-            .iter()
-            .take_while(|held| **held & !removed_bit == key)
-            .position(|held| held & removed_bit == 0)
-        {
-            return self.identities.handle(first + offset);
-        }
-        let h = match self.identities.allocate(self.keys.len()) {
-            Ok(handle) => handle,
-            Err(error) => {
-                record_failure(error);
-                return INVALID_HANDLE;
-            }
-        };
-        if self.sorted_len == self.keys.len()
-            && self
-                .keys
-                .last()
-                .is_none_or(|&last| last & !removed_bit < key)
-        {
-            self.sorted_len += 1;
-        } else {
-            self.index.insert(key, h);
-        }
-        self.keys.push(key);
-        h
-    }
-
-    fn reindex(&mut self, removed_bit: u64) {
-        self.index = self
-            .keys
-            .iter()
-            .enumerate()
-            .skip(self.sorted_len)
-            .filter(|(_, key)| **key & removed_bit == 0)
-            .map(|(slot, key)| (*key, self.identities.handle(slot)))
-            .chain(
-                self.relocated
-                    .iter()
-                    .filter(|(_, key)| **key & removed_bit == 0)
-                    .map(|(handle, key)| (*key, *handle)),
-            )
-            .collect();
-    }
-
-    fn get(&self, handle: u32) -> Option<u64> {
-        self.relocated
-            .get(&handle)
-            .copied()
-            .or_else(|| self.keys.get(self.identities.slot(handle)?).copied())
-    }
-}
 
 impl HandleTable {
     pub fn alloc_method(&mut self, m: MethodLocation) -> u32 {
@@ -157,31 +92,36 @@ impl HandleTable {
             }
         }
         for handle in affected {
-            let held = &mut self.methods.keys[handle];
-            if *held as u16 == slot {
-                *held |= METHOD_REMOVED;
+            let held = self.methods.keys[handle];
+            if held as u16 == slot {
+                self.methods.set_key(handle, held | METHOD_REMOVED);
             } else {
-                *held -= 1;
-                if handle >= self.methods.sorted_len && *held & METHOD_REMOVED == 0 {
+                self.methods.set_key(handle, held - 1);
+                if handle >= self.methods.sorted_len && held & METHOD_REMOVED == 0 {
                     self.methods
                         .index
-                        .insert(*held, self.methods.identities.handle(handle));
+                        .insert(held - 1, self.methods.identities.handle(handle));
                 }
             }
         }
-        for (&handle, held) in &mut self.methods.relocated {
-            if *held & METHOD_REMOVED != 0
-                || *held & !(0xffff | METHOD_REMOVED) != group
-                || (*held as u16) < slot
-            {
-                continue;
-            }
-            self.methods.index.remove(held);
-            if *held as u16 == slot {
-                *held |= METHOD_REMOVED;
+        let relocated: Vec<_> = self
+            .methods
+            .relocated
+            .iter()
+            .filter(|&(_, &held)| {
+                held & METHOD_REMOVED == 0
+                    && held & !(0xffff | METHOD_REMOVED) == group
+                    && held as u16 >= slot
+            })
+            .map(|(&handle, &held)| (handle, held))
+            .collect();
+        for (handle, held) in relocated {
+            self.methods.index.remove(&held);
+            if held as u16 == slot {
+                self.methods.set_relocated(handle, held | METHOD_REMOVED);
             } else {
-                *held -= 1;
-                self.methods.index.insert(*held, handle);
+                self.methods.set_relocated(handle, held - 1);
+                self.methods.index.insert(held - 1, handle);
             }
         }
     }
@@ -195,12 +135,14 @@ impl HandleTable {
             return;
         }
         self.forget_method(old);
-        self.methods.keys[self
+        let slot = self
             .methods
             .identities
             .slot(handle)
-            .expect("allocated handle names its table slot")] |= METHOD_REMOVED;
-        self.methods.relocated.insert(handle, key);
+            .expect("allocated handle names its table slot");
+        self.methods
+            .set_key(slot, self.methods.keys[slot] | METHOD_REMOVED);
+        self.methods.set_relocated(handle, key);
         self.methods.index.insert(key, handle);
     }
 
@@ -231,41 +173,65 @@ impl HandleTable {
     }
 
     pub fn forget_class(&mut self, class: ClassLocation) {
-        for key in &mut self.classes.keys {
-            if (*key >> 56) as usize != class.dex_idx {
-                continue;
-            }
-            match (*key as u32 as usize).cmp(&class.class_idx) {
-                std::cmp::Ordering::Equal => *key |= CLASS_REMOVED,
-                std::cmp::Ordering::Greater => *key -= 1,
-                std::cmp::Ordering::Less => {}
-            }
+        let classes: Vec<_> = self
+            .classes
+            .keys
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, &key)| Some((slot, after_removal(key, class, 0, CLASS_REMOVED)?)))
+            .collect();
+        for (slot, key) in classes {
+            self.classes.set_key(slot, key);
         }
-        for key in &mut self.methods.keys {
-            if (*key >> 56) as usize != class.dex_idx {
-                continue;
-            }
-            match ((*key >> 24) as u32 as usize).cmp(&class.class_idx) {
-                std::cmp::Ordering::Equal => *key |= METHOD_REMOVED,
-                std::cmp::Ordering::Greater => *key -= 1 << 24,
-                std::cmp::Ordering::Less => {}
-            }
+        let methods: Vec<_> = self
+            .methods
+            .keys
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, &key)| Some((slot, after_removal(key, class, 24, METHOD_REMOVED)?)))
+            .collect();
+        for (slot, key) in methods {
+            self.methods.set_key(slot, key);
         }
-        for key in self.methods.relocated.values_mut() {
-            if (*key >> 56) as usize != class.dex_idx {
-                continue;
-            }
-            match ((*key >> 24) as u32 as usize).cmp(&class.class_idx) {
-                std::cmp::Ordering::Equal => *key |= METHOD_REMOVED,
-                std::cmp::Ordering::Greater => *key -= 1 << 24,
-                std::cmp::Ordering::Less => {}
-            }
+        let relocated: Vec<_> = self
+            .methods
+            .relocated
+            .iter()
+            .filter_map(|(&handle, &key)| {
+                Some((handle, after_removal(key, class, 24, METHOD_REMOVED)?))
+            })
+            .collect();
+        for (handle, key) in relocated {
+            self.methods.set_relocated(handle, key);
         }
         self.classes.reindex(CLASS_REMOVED);
         // Class removal can put a removed method's slot after a live method
         // in the next class. The old prefix no longer has a sortable key order.
-        self.methods.sorted_len = 0;
+        self.methods.set_sorted_len(0);
         self.methods.reindex(METHOD_REMOVED);
+    }
+
+    /// The open savepoints, oldest first.
+    #[cfg(feature = "kotlin")]
+    pub fn savepoints(&self) -> Vec<Savepoint> {
+        self.methods.savepoints().collect()
+    }
+
+    pub fn open_savepoint(&mut self, savepoint: Savepoint) {
+        self.methods.open_savepoint(savepoint);
+        self.classes.open_savepoint(savepoint);
+    }
+
+    pub fn release_savepoint(&mut self, savepoint: Savepoint) {
+        self.methods.release_savepoint(savepoint);
+        self.classes.release_savepoint(savepoint);
+    }
+
+    /// Handles allocated since `savepoint` end removed rather than reused, so
+    /// a handle never names two locations in one run.
+    pub fn rollback_to(&mut self, savepoint: Savepoint) {
+        self.methods.rollback_to(savepoint, METHOD_REMOVED);
+        self.classes.rollback_to(savepoint, CLASS_REMOVED);
     }
 
     pub fn get_class(&self, handle: u32) -> Option<ClassLocation> {
@@ -277,6 +243,20 @@ impl HandleTable {
             dex_idx: (key >> 56) as usize,
             class_idx: key as u32 as usize,
         })
+    }
+}
+
+/// `key`, a class or method key whose class position starts at bit `shift`,
+/// after class `class` is removed: removed when it is in that class, a class
+/// lower when it is after it, and unchanged (`None`) otherwise.
+fn after_removal(key: u64, class: ClassLocation, shift: u32, removed_bit: u64) -> Option<u64> {
+    if (key >> 56) as usize != class.dex_idx {
+        return None;
+    }
+    match ((key >> shift) as u32 as usize).cmp(&class.class_idx) {
+        std::cmp::Ordering::Equal => Some(key | removed_bit),
+        std::cmp::Ordering::Greater => Some(key - (1 << shift)),
+        std::cmp::Ordering::Less => None,
     }
 }
 

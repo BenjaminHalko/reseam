@@ -4,6 +4,7 @@
 mod by_type;
 mod lifecycle;
 mod records;
+mod undo;
 
 use std::sync::OnceLock;
 
@@ -16,6 +17,8 @@ use crate::types::{TypeIdx, TypeList};
 use by_type::TypeIndex;
 use records::RECORD_SIZE;
 pub use records::{ClassHeader, RawClassDef};
+pub(crate) use undo::Undone;
+use undo::{ClassKey, ClassUndo, Prior};
 
 #[derive(Debug, Clone)]
 enum ClassSlot {
@@ -58,6 +61,7 @@ pub struct ClassTable {
     /// Indices of the resident slots, ascending.
     resident: Vec<u32>,
     by_type: OnceLock<TypeIndex>,
+    journal: reseam_journal::Journal<ClassKey, ClassUndo>,
 }
 
 impl ClassTable {
@@ -78,6 +82,7 @@ impl ClassTable {
             slots: (0..count as u32).map(ClassSlot::Raw).collect(),
             resident: Vec::new(),
             by_type: OnceLock::new(),
+            journal: reseam_journal::Journal::default(),
         })
     }
 
@@ -157,7 +162,12 @@ impl ClassTable {
             index.changed.insert(i as u32);
         }
         match self.slots.get_mut(i)? {
-            ClassSlot::Resident(c) => Some(c.grant()),
+            ClassSlot::Resident(c) => {
+                self.journal.record(ClassKey::Slot(i as u32), || {
+                    ClassUndo::Restore(i as u32, Prior::Resident(Box::new(c.def.clone())))
+                });
+                Some(c.grant())
+            }
             ClassSlot::Raw(_) => None,
         }
     }
@@ -187,10 +197,19 @@ impl ClassTable {
                     matches!(slot, ClassSlot::Resident(_)).then_some(i as u32)
                 }));
         }
-        self.slots.iter_mut().filter_map(|s| match s {
-            ClassSlot::Resident(c) => Some(c.grant()),
-            ClassSlot::Raw(_) => None,
-        })
+        let journal = &mut self.journal;
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(move |(i, s)| match s {
+                ClassSlot::Resident(c) => {
+                    journal.record(ClassKey::Slot(i as u32), || {
+                        ClassUndo::Restore(i as u32, Prior::Resident(Box::new(c.def.clone())))
+                    });
+                    Some(c.grant())
+                }
+                ClassSlot::Raw(_) => None,
+            })
     }
 
     pub(crate) fn resident_indices(&self) -> &[u32] {

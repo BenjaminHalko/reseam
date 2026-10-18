@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::code::{Code, Condition, HookKind, Operand, Place, SlotId, Statement};
+use crate::code::{Code, HookKind};
 use crate::codegen::{self, Layer, Links};
 use crate::edit::Editor;
 use crate::environment::original_function;
 use crate::error::{HermesError, Result, invalid};
 use crate::model::{StringId, StringKind};
 use crate::{FunctionId, FunctionIndex, ModuleId};
+
+mod resolver;
+
+use resolver::Resolver;
 
 impl Editor<'_> {
     /// Adds `code` to `function` as a new layer; callers are untouched. [`HookKind::Before`] and
@@ -78,7 +82,7 @@ impl Editor<'_> {
             };
             self.append_function(previous);
             if !edited {
-                self.edits.relocated.insert(function, original);
+                self.edits.relocate(function, original);
             }
         } else if !edited {
             if self.edits.roots.contains_key(&function) {
@@ -87,15 +91,11 @@ impl Editor<'_> {
                     function.0
                 )));
             }
-            self.edits.discarded.insert(function);
+            self.edits.discard(function);
         }
-        self.edits.functions.insert(function, body);
+        self.edits.set_function(function, body);
         for (id, root) in plan.into_iter().flat_map(|plan| plan.roots) {
-            self.edits
-                .roots
-                .entry(id)
-                .and_modify(|existing| existing.sites.extend(&root.sites))
-                .or_insert(root);
+            self.edits.attach_root(id, root);
         }
         Ok(())
     }
@@ -120,242 +120,5 @@ impl Editor<'_> {
     }
 }
 
-/// Checks a hook's code and resolves its names to the file's strings.
-struct Resolver<'e, 'a> {
-    editor: &'e mut Editor<'a>,
-    kind: HookKind,
-    slots: u32,
-    calls_exports: bool,
-}
-
-impl Resolver<'_, '_> {
-    fn code(&mut self, code: &Code) -> Result<Code<StringId>> {
-        if code.blocks.is_empty() {
-            return Err(malformed("hook code has no body"));
-        }
-        let mut entered = vec![false; code.blocks.len()];
-        entered[0] = true;
-        for statement in code.blocks.iter().flatten() {
-            if let Statement::Branch {
-                then, otherwise, ..
-            } = statement
-            {
-                for block in [then, otherwise] {
-                    let entry = entered
-                        .get_mut(block.0 as usize)
-                        .ok_or_else(|| malformed("branch to a missing block"))?;
-                    if std::mem::replace(entry, true) {
-                        return Err(malformed("a block runs from more than one place"));
-                    }
-                }
-            }
-        }
-        let blocks = code
-            .blocks
-            .iter()
-            .map(|block| block.iter().map(|s| self.statement(s)).collect())
-            .collect::<Result<_>>()?;
-        Ok(Code { blocks })
-    }
-
-    fn statement(&mut self, statement: &Statement) -> Result<Statement<StringId>> {
-        Ok(match statement {
-            Statement::Call {
-                into,
-                module,
-                export,
-                arguments,
-            } => {
-                self.slot(*into);
-                self.calls_exports = true;
-                Statement::Call {
-                    into: *into,
-                    module: *module,
-                    export: self.editor.declared_export(*module, export)?,
-                    arguments: arguments
-                        .iter()
-                        .map(|argument| self.operand(argument))
-                        .collect::<Result<_>>()?,
-                }
-            }
-            Statement::Assign { place, value } => {
-                match place {
-                    Place::Result => self.require_result()?,
-                    Place::Slot(slot) => self.slot(*slot),
-                    Place::Param(_) => {}
-                }
-                Statement::Assign {
-                    place: *place,
-                    value: self.operand(value)?,
-                }
-            }
-            Statement::Return(value) => Statement::Return(self.operand(value)?),
-            Statement::Branch {
-                condition,
-                then,
-                otherwise,
-            } => Statement::Branch {
-                condition: match condition {
-                    Condition::True(value) => Condition::True(self.operand(value)?),
-                    Condition::False(value) => Condition::False(self.operand(value)?),
-                    Condition::Null(value) => Condition::Null(self.operand(value)?),
-                    Condition::NotNull(value) => Condition::NotNull(self.operand(value)?),
-                    Condition::Equal(left, right) => {
-                        Condition::Equal(self.operand(left)?, self.operand(right)?)
-                    }
-                    Condition::NotEqual(left, right) => {
-                        Condition::NotEqual(self.operand(left)?, self.operand(right)?)
-                    }
-                },
-                then: *then,
-                otherwise: *otherwise,
-            },
-        })
-    }
-
-    fn operand(&mut self, operand: &Operand) -> Result<Operand<StringId>> {
-        Ok(match operand {
-            Operand::Receiver => Operand::Receiver,
-            Operand::Param(index) => Operand::Param(*index),
-            Operand::Result => {
-                self.require_result()?;
-                Operand::Result
-            }
-            Operand::Slot(slot) => {
-                self.slot(*slot);
-                Operand::Slot(*slot)
-            }
-            Operand::Undefined => Operand::Undefined,
-            Operand::Null => Operand::Null,
-            Operand::Bool(value) => Operand::Bool(*value),
-            Operand::Int(value) => Operand::Int(*value),
-            Operand::Text(text) => Operand::Text(self.editor.intern(text, StringKind::String)?),
-        })
-    }
-
-    fn slot(&mut self, slot: SlotId) {
-        self.slots = self.slots.max(slot.0 + 1);
-    }
-
-    fn require_result(&self) -> Result<()> {
-        if self.kind == HookKind::After {
-            Ok(())
-        } else {
-            Err(malformed("only after hooks have a result"))
-        }
-    }
-}
-
-fn malformed(reason: &str) -> HermesError {
-    HermesError::Unsupported(format!("malformed hook code: {reason}"))
-}
-
 #[cfg(test)]
-mod tests {
-    use reseam_storage::Bytes;
-
-    use crate::code::{BlockId, Code, Condition, HookKind, Operand, Place, SlotId, Statement};
-    use crate::{Editor, FunctionIndex, HermesImage};
-
-    /// Code that reads every kind of operand, branches and calls an export.
-    fn exercising(module: crate::ModuleId, kind: HookKind) -> Code {
-        let result = if kind == HookKind::After {
-            Operand::Result
-        } else {
-            Operand::Param(0)
-        };
-        let call = |into| Statement::Call {
-            into: SlotId(into),
-            module,
-            export: "withProperty".into(),
-            arguments: vec![
-                Operand::Text("bundle".into()),
-                Operand::Int(-1),
-                Operand::Bool(true),
-                Operand::Receiver,
-                Operand::Param(2),
-            ],
-        };
-        Code {
-            blocks: vec![
-                vec![
-                    call(0),
-                    Statement::Branch {
-                        condition: Condition::NotNull(Operand::Slot(SlotId(0))),
-                        then: BlockId(1),
-                        otherwise: BlockId(2),
-                    },
-                    Statement::Assign {
-                        place: Place::Param(1),
-                        value: result,
-                    },
-                ],
-                vec![Statement::Return(Operand::Slot(SlotId(0)))],
-                vec![
-                    call(1),
-                    Statement::Branch {
-                        condition: Condition::Equal(Operand::Slot(SlotId(1)), Operand::Null),
-                        then: BlockId(3),
-                        otherwise: BlockId(4),
-                    },
-                ],
-                vec![Statement::Return(Operand::Undefined)],
-                vec![],
-            ],
-        }
-    }
-
-    #[test]
-    fn hooked_functions_jump_only_to_their_own_instructions() {
-        let host = HermesImage::parse(Bytes::from_slice(include_bytes!("../fixtures/host.hbc")))
-            .expect("host fixture parses");
-        let module =
-            HermesImage::parse(Bytes::from_slice(include_bytes!("../fixtures/bundled.hbc")))
-                .expect("module fixture parses");
-        let index = FunctionIndex::build(&host.file()).expect("host indexes");
-        let greet = index
-            .find_function(&host.file(), Some("greet"), &[], None)
-            .expect("fixture function exists");
-        let mut editor = Editor::new(host.file());
-        let id = editor
-            .link(&index, &module.file(), &[])
-            .expect("module links");
-        for kind in [HookKind::Before, HookKind::After, HookKind::Replace] {
-            editor
-                .hook(&index, greet, kind, &exercising(id, kind))
-                .unwrap_or_else(|error| panic!("{kind:?} hook applies: {error}"));
-        }
-        let mut output = Vec::new();
-        editor.write(&mut output).expect("hooked file writes");
-        let hooked = HermesImage::parse(Bytes::from_vec(output)).expect("hooked file parses");
-        let file = hooked.file();
-        for id in 0..file.function_count() {
-            let function = file
-                .function(crate::FunctionId(id))
-                .expect("function parses");
-            let code = function.instructions().expect("function decodes");
-            let starts: std::collections::BTreeSet<i64> = code
-                .iter()
-                .map(|inst| i64::from(inst.offset.expect("decoded")))
-                .collect();
-            let end = function.body_range().len() as i64;
-            for inst in &code {
-                for (operand, value) in inst.operands() {
-                    if !operand.kind.is_address() {
-                        continue;
-                    }
-                    let relative = match operand.kind.width() {
-                        1 => i64::from(value as u8 as i8),
-                        _ => i64::from(value as u32 as i32),
-                    };
-                    let target = i64::from(inst.offset.expect("decoded")) + relative;
-                    assert!(
-                        starts.contains(&target) || target == end,
-                        "function {id} jumps from {:?} to byte {target}",
-                        inst.op
-                    );
-                }
-            }
-        }
-    }
-}
+mod tests;

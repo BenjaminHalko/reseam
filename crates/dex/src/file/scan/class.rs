@@ -188,7 +188,7 @@ pub(super) fn decode_one_method(
         Ok(ControlFlow::Break(EncodedMethod {
             method: header.method,
             access_flags: header.access_flags,
-            code,
+            code: code.map(std::sync::Arc::new),
         }))
     })?;
     Ok(result.break_value())

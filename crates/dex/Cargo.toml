@@ -9,6 +9,7 @@ readme = "README.md"
 
 [dependencies]
 reseam-storage = { workspace = true }
+reseam-journal = { workspace = true }
 thiserror = { workspace = true }
 bitflags  = { workspace = true }
 smallvec  = { workspace = true, features = ["union"] }

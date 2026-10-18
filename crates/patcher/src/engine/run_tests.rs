@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::sync::{Arc, Mutex};
-
 use super::*;
 use crate::engine::{Delivery, PatchSelection};
 use crate::error::PatcherError;
@@ -156,7 +154,7 @@ fn dependency_selection_stops_at_unavailable_or_incompatible_nodes() {
     helper.compatibility = Compatibility::Universal;
     let mut middle = declared("bundle", "middle", &["bundle/helper"]);
     middle.enabled_by_default = false;
-    let root = declared("bundle", "root", &["bundle/middle"]);
+    let root = declared("bundle", "root", &["bundle/middle", "bundle/helper"]);
     for (selection, (package, expected)) in [
         (
             PatchSelection::default(),
@@ -272,109 +270,7 @@ fn explicitly_selected_missing_dependencies_are_errors() {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Failure {
-    None,
-    Execute,
-    Finalize,
-}
-
-fn hooked(declaration: PatchSpec, failure: Failure, events: Arc<Mutex<Vec<String>>>) -> Patch {
-    let id = declaration.id.clone();
-    Patch::new(declaration, true, move |phase, _| {
-        let name = match phase {
-            PatchPhase::Execute => "execute",
-            PatchPhase::Finalize => "finalize",
-        };
-        events.lock().unwrap().push(format!("{name}:{id}"));
-        if matches!(
-            (phase, failure),
-            (PatchPhase::Execute, Failure::Execute) | (PatchPhase::Finalize, Failure::Finalize)
-        ) {
-            return Err(PatcherError::Bridge("fixture callback failed".into()));
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn finalization_orders_hooks_and_emits_one_terminal_result() {
-    for (failure, expected) in [
-        (Failure::None, [A, A, A]),
-        (Failure::Execute, [F, A, S]),
-        (Failure::Finalize, [F, A, A]),
-    ] {
-        let (_dir, mut apk) = crate::test_support::apk();
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let dependency = hooked(
-            declared("bundle", "dependency", &[]),
-            failure,
-            events.clone(),
-        );
-        let leaf = hooked(
-            declared("bundle", "leaf", &[]),
-            Failure::None,
-            events.clone(),
-        );
-        let consumer = hooked(
-            declared("bundle", "consumer", &["bundle/dependency"]),
-            Failure::None,
-            events.clone(),
-        );
-        let mut finished = Vec::new();
-        let patches = [&consumer, &dependency, &leaf];
-        let specs: Vec<_> = patches.iter().map(|patch| patch.spec()).collect();
-        let plan = ResolvedPlan::resolve(
-            &specs,
-            &PatchSelection::default(),
-            Delivery::Install,
-            Some("com.example"),
-            Some("2.0"),
-        )
-        .unwrap();
-        let results = apply_patches(
-            &mut PatchContext::new(&mut apk),
-            &specs,
-            &plan,
-            &patches,
-            |event| {
-                if let ProgressEvent::Finished { patch, status } = event {
-                    events.lock().unwrap().push(format!("finished:{patch}"));
-                    finished.push((patch, Status::from(&status)));
-                }
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            results
-                .iter()
-                .map(|r| Status::from(&r.status))
-                .collect::<Vec<_>>(),
-            expected
-        );
-        assert_eq!(finished.len(), results.len());
-        for result in &results {
-            assert_eq!(
-                finished
-                    .iter()
-                    .filter(|(patch, _)| *patch == result.patch)
-                    .map(|(_, status)| *status)
-                    .collect::<Vec<_>>(),
-                [Status::from(&result.status)]
-            );
-        }
-        let events = events.lock().unwrap();
-        let position = |event: &str| events.iter().position(|value| value == event).unwrap();
-        assert!(position("finalize:leaf") < position("finished:bundle/leaf"));
-        if matches!(failure, Failure::Execute) {
-            assert!(
-                !events
-                    .iter()
-                    .any(|event| event == "finalize:dependency" || event == "finalize:consumer")
-            );
-        } else {
-            assert!(position("finalize:consumer") < position("finalize:dependency"));
-            assert!(position("finalize:dependency") < position("finished:bundle/dependency"));
-        }
-    }
-}
+#[path = "run_tests/finalization.rs"]
+mod finalization;
+#[path = "run_tests/rollback.rs"]
+mod rollback;

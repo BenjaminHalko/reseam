@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::sync::Arc;
+
 use crate::kotlin::handles::record_failure;
 use boltffi::export;
 use reseam_apk::reseam_dex::{self as dex, AccessFlags};
@@ -48,6 +50,7 @@ pub fn grow_local_registers(
         let mut code = method
             .code
             .take()
+            .map(Arc::unwrap_or_clone)
             .ok_or_else(|| format!("method handle {m} has no code"))?;
         let incoming = incoming_types(dex, id, flags);
         let indices = logged(
@@ -62,7 +65,7 @@ pub fn grow_local_registers(
         );
         logged("restore method code", method_mut(dex, loc))?
             .expect("frame growth leaves the method slot in place")
-            .code = Some(code);
+            .code = Some(Arc::new(code));
         let mut mapping = super::mutation::edit_mapping(indices?)?;
         mapping.register_shift = additional_locals;
         Ok(Some(mapping))

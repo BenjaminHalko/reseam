@@ -6,23 +6,33 @@ use std::panic::{self, AssertUnwindSafe};
 
 use tracing::{info, info_span};
 
-use super::plan::{CHANGES_MANIFEST, unmountable_status};
+use super::plan::unmountable_status;
 use super::{PatchResult, PatchStatus, ProgressEvent, ResolvedPlan};
 use crate::context::PatchContext;
 use crate::error::{PatcherError, Result};
 use crate::log::LogEntry;
 use crate::patch::{Patch, PatchPhase, PatchSpec};
 
+mod results;
+mod savepoints;
+
+use results::Run;
+use savepoints::Savepoints;
+
 /// Runs `plan` over `specs` in dependency order, then the `after_dependents`
 /// hook of every applied patch that finalizes, then binds the app entry hook to
 /// the final manifest. `patches` holds the code of at least every patch the
-/// plan executes. A patch that fails or panics does not stop the run; patches
-/// depending on it are skipped. Each patch is reported finished once its result
-/// is final: after execution, or after finalization when it finalizes.
+/// plan executes.
+///
+/// A patch that fails, panics or, in a mount build, edits the manifest leaves
+/// nothing behind: the run returns to before it and goes on as the plan would
+/// have without it, so the patches that need it are skipped and dependencies
+/// only they needed are undone. Each patch is reported finished once its
+/// result is final: after execution, or after finalization when it finalizes.
 pub fn apply_patches(
     ctx: &mut PatchContext<'_>,
     specs: &[&PatchSpec],
-    plan: &ResolvedPlan,
+    mut plan: ResolvedPlan,
     patches: &[&Patch],
     mut observer: impl FnMut(ProgressEvent),
 ) -> Result<Vec<PatchResult>> {
@@ -32,83 +42,161 @@ pub fn apply_patches(
         patch_count = plan.order().len(),
         "starting patch application"
     );
-    let code = loaded_code(specs, plan, patches)?;
-    let mut run = Run::new(specs, plan, &code);
+    let code = loaded_code(specs, &plan, patches)?;
+    let mut run = Run::new(specs, &code);
+    let mut savepoints = Savepoints::default();
 
-    for &idx in plan.order() {
-        let reference = specs[idx].reference();
-        let _span = info_span!("patch", patch = reference.as_str()).entered();
-        if let Some(status) = run.blocked(idx) {
-            run.finish(idx, status, Vec::new(), &mut observer);
-            continue;
-        }
-        let patch = code[idx].expect("loaded_code holds the code of every patch the plan executes");
-
-        ctx.begin_patch(&reference, plan.options(idx).clone());
-        observer(ProgressEvent::Started {
-            patch: reference.clone(),
-        });
-        let manifest = ctx.apk().manifest_revision();
-        let outcome = guarded(|| patch.invoke(PatchPhase::Execute, ctx));
-        let logs = ctx.take_log_entries();
-        for log in &logs {
-            observer(ProgressEvent::Log(log.clone()));
-        }
-        let status = match outcome {
-            Ok(()) if plan.delivery().forbids_manifest_edit(manifest, ctx) => unmountable_status(),
-            Ok(()) => PatchStatus::Applied,
-            Err(reason) => PatchStatus::Failed { reason },
-        };
-        run.finish(idx, status, logs, &mut observer);
-    }
-
-    for &idx in plan.finalizers() {
-        let Some(patch) = code[idx].filter(|patch| patch.finalizes()) else {
-            continue;
-        };
-        if !run.applied(idx) {
-            continue;
-        }
-        let _span = info_span!("after_dependents", patch = patch.reference()).entered();
-        ctx.begin_patch(patch.reference(), plan.options(idx).clone());
-        let manifest = ctx.apk().manifest_revision();
-        let outcome = guarded(|| patch.invoke(PatchPhase::Finalize, ctx));
-        let logs = ctx.take_log_entries();
-        for log in &logs {
-            observer(ProgressEvent::Log(log.clone()));
-        }
-        run.append_logs(idx, logs);
-        match outcome {
-            Ok(()) if plan.delivery().forbids_manifest_edit(manifest, ctx) => {
-                run.set_status(idx, unmountable_status());
+    'run: loop {
+        for idx in plan.order().to_vec() {
+            if run.settled(idx) {
+                continue;
             }
-            Ok(()) => {}
-            Err(reason) => run.set_status(
-                idx,
-                PatchStatus::Failed {
-                    reason: format!("after_dependents: {reason}"),
-                },
-            ),
+            let reference = specs[idx].reference();
+            let _span = info_span!("patch", patch = reference.as_str()).entered();
+            if let Some(status) = run.blocked(&plan, idx) {
+                run.finish(&plan, idx, status, Vec::new(), &mut observer);
+                continue;
+            }
+            let patch =
+                code[idx].expect("loaded_code holds the code of every patch the plan executes");
+            let savepoint = savepoints.open(ctx, idx)?;
+            ctx.begin_patch(&reference, plan.options(idx).clone());
+            observer(ProgressEvent::Started {
+                patch: reference.clone(),
+            });
+            let (status, logs) = invoke(ctx, &plan, patch, PatchPhase::Execute, &mut observer);
+            if status == PatchStatus::Applied {
+                if plan.is_selected(idx) && !patch.finalizes() {
+                    savepoints.release(ctx, savepoint)?;
+                }
+                run.finish(&plan, idx, status, logs, &mut observer);
+            } else {
+                savepoints.rollback(ctx, savepoint)?;
+                leave_out(
+                    ctx,
+                    &mut plan,
+                    &mut run,
+                    &mut savepoints,
+                    idx,
+                    status,
+                    logs,
+                    &mut observer,
+                )?;
+                continue 'run;
+            }
         }
-        run.terminal(idx, &mut observer);
+
+        for idx in plan.finalizers().to_vec() {
+            let Some(patch) = code[idx].filter(|patch| patch.finalizes()) else {
+                continue;
+            };
+            if !run.applied(idx) || run.finalized(idx) {
+                continue;
+            }
+            let _span = info_span!("after_dependents", patch = patch.reference()).entered();
+            ctx.begin_patch(patch.reference(), plan.options(idx).clone());
+            let (status, logs) = invoke(ctx, &plan, patch, PatchPhase::Finalize, &mut observer);
+            if status == PatchStatus::Applied {
+                run.finalize(idx, logs, &mut observer);
+            } else {
+                let mut all_logs = run.take_logs(idx);
+                all_logs.extend(logs);
+                leave_out(
+                    ctx,
+                    &mut plan,
+                    &mut run,
+                    &mut savepoints,
+                    idx,
+                    status,
+                    all_logs,
+                    &mut observer,
+                )?;
+                continue 'run;
+            }
+        }
+        break;
     }
 
+    savepoints.release_all(ctx)?;
     ctx.bind_app_entry()?;
     ctx.finish_hermes()?;
     info!("patch application finished");
-    Ok(run.into_results())
+    Ok(run.into_results(&plan))
 }
 
 /// The outcome of `plan` without touching the APK or loading patch code: which
 /// patches would run and which would be skipped.
 pub fn validate_patches(specs: &[&PatchSpec], plan: &ResolvedPlan) -> Vec<PatchResult> {
     let code = vec![None; specs.len()];
-    let mut run = Run::new(specs, plan, &code);
+    let mut run = Run::new(specs, &code);
     for &idx in plan.order() {
-        let status = run.blocked(idx).unwrap_or(PatchStatus::Applied);
-        run.finish(idx, status, Vec::new(), &mut |_| {});
+        let status = run.blocked(plan, idx).unwrap_or(PatchStatus::Applied);
+        run.finish(plan, idx, status, Vec::new(), &mut |_| {});
     }
-    run.into_results()
+    run.into_results(plan)
+}
+
+fn invoke(
+    ctx: &mut PatchContext<'_>,
+    plan: &ResolvedPlan,
+    patch: &Patch,
+    phase: PatchPhase,
+    observer: &mut impl FnMut(ProgressEvent),
+) -> (PatchStatus, Vec<LogEntry>) {
+    let manifest = ctx.apk().manifest_revision();
+    let outcome = guarded(|| patch.invoke(phase, ctx));
+    let logs = ctx.take_log_entries();
+    for log in &logs {
+        observer(ProgressEvent::Log(log.clone()));
+    }
+    let status = match outcome {
+        Ok(()) if plan.delivery().forbids_manifest_edit(manifest, ctx) => unmountable_status(),
+        Ok(()) => PatchStatus::Applied,
+        Err(reason) => PatchStatus::Failed {
+            reason: match phase {
+                PatchPhase::Execute => reason,
+                PatchPhase::Finalize => format!("after_dependents: {reason}"),
+            },
+        },
+    };
+    (status, logs)
+}
+
+/// Leaves the patch at `idx` out of the plan with its final `status`. When the
+/// run already holds work the plan no longer allows, a dependency only this
+/// patch needed or, after a finalizer, patches that ran since this one, the run
+/// returns to before the earliest of it; those patches run again if the plan
+/// still covers them.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the run's parts are separate borrows of apply_patches"
+)]
+fn leave_out(
+    ctx: &mut PatchContext<'_>,
+    plan: &mut ResolvedPlan,
+    run: &mut Run<'_>,
+    savepoints: &mut Savepoints,
+    idx: usize,
+    status: PatchStatus,
+    logs: Vec<LogEntry>,
+    observer: &mut impl FnMut(ProgressEvent),
+) -> Result<()> {
+    plan.exclude(idx, status.clone());
+    if let Some((first, savepoint)) =
+        savepoints.earliest(|held| held == idx || (run.applied(held) && !plan.executes(held)))
+    {
+        savepoints.rollback(ctx, savepoint)?;
+        let patches = run.revert_from(plan, first);
+        if !patches.is_empty() {
+            observer(ProgressEvent::Reverted { patches });
+        }
+    }
+    run.finish_excluded(plan, idx, status, logs, observer);
+    assert!(
+        (0..plan.len()).all(|held| !run.applied(held) || plan.executes(held)),
+        "every patch the plan no longer runs held a savepoint at or before its work"
+    );
+    Ok(())
 }
 
 /// The code of each patch in `specs`, by position, when `patches` holds it.
@@ -133,121 +221,6 @@ fn loaded_code<'a>(
             }
         })
         .collect()
-}
-
-struct Run<'a> {
-    specs: &'a [&'a PatchSpec],
-    plan: &'a ResolvedPlan,
-    code: &'a [Option<&'a Patch>],
-    results: Vec<Option<PatchResult>>,
-}
-
-impl<'a> Run<'a> {
-    fn new(
-        specs: &'a [&'a PatchSpec],
-        plan: &'a ResolvedPlan,
-        code: &'a [Option<&'a Patch>],
-    ) -> Self {
-        Self {
-            specs,
-            plan,
-            code,
-            results: (0..specs.len()).map(|_| None).collect(),
-        }
-    }
-
-    /// Why the patch cannot run, as its final status, or `None` when it can.
-    fn blocked(&self, idx: usize) -> Option<PatchStatus> {
-        if let Some(status) = self.plan.precluded(idx) {
-            return Some(status.clone());
-        }
-        let skipped = |reason: String| Some(PatchStatus::Skipped { reason });
-        for &dependency in self.plan.dependencies(idx) {
-            let name = self.specs[dependency].reference();
-            match self.results[dependency]
-                .as_ref()
-                .map(|result| &result.status)
-            {
-                Some(PatchStatus::Applied) => {}
-                Some(PatchStatus::Skipped { reason }) => {
-                    return skipped(format!("dependency '{name}' skipped: {reason}"));
-                }
-                Some(PatchStatus::Unmountable { .. }) => {
-                    return skipped(format!("dependency '{name}' {CHANGES_MANIFEST}"));
-                }
-                Some(PatchStatus::Failed { reason }) => {
-                    return skipped(format!("dependency '{name}' failed: {reason}"));
-                }
-                None => return skipped(format!("dependency '{name}' was not executed")),
-            }
-        }
-        None
-    }
-
-    fn applied(&self, idx: usize) -> bool {
-        matches!(
-            self.results[idx].as_ref().map(|r| &r.status),
-            Some(PatchStatus::Applied)
-        )
-    }
-
-    fn finish(
-        &mut self,
-        idx: usize,
-        status: PatchStatus,
-        logs: Vec<LogEntry>,
-        observer: &mut impl FnMut(ProgressEvent),
-    ) {
-        let spec = self.specs[idx];
-        self.results[idx] = Some(PatchResult {
-            patch: spec.reference(),
-            hidden: spec.hidden,
-            required_by: self
-                .plan
-                .required_by(idx)
-                .map(|dependent| self.specs[dependent].reference())
-                .collect(),
-            status,
-            logs,
-        });
-        if !self.applied(idx) || !self.code[idx].is_some_and(Patch::finalizes) {
-            self.terminal(idx, observer);
-        }
-    }
-
-    fn result_mut(&mut self, idx: usize) -> &mut PatchResult {
-        self.results[idx]
-            .as_mut()
-            .expect("execution creates a result before finalization")
-    }
-
-    fn append_logs(&mut self, idx: usize, logs: Vec<LogEntry>) {
-        self.result_mut(idx).logs.extend(logs);
-    }
-
-    fn set_status(&mut self, idx: usize, status: PatchStatus) {
-        self.result_mut(idx).status = status;
-    }
-
-    fn terminal(&mut self, idx: usize, observer: &mut impl FnMut(ProgressEvent)) {
-        let result = self.result_mut(idx);
-        observer(ProgressEvent::Finished {
-            patch: result.patch.clone(),
-            status: result.status.clone(),
-        });
-    }
-
-    fn into_results(mut self) -> Vec<PatchResult> {
-        self.plan
-            .order()
-            .iter()
-            .map(|&idx| {
-                self.results[idx]
-                    .take()
-                    .expect("plan visits every patch exactly once after execution")
-            })
-            .collect()
-    }
 }
 
 fn guarded(hook: impl FnOnce() -> Result<()>) -> std::result::Result<(), String> {

@@ -105,7 +105,7 @@ fn run(
     let plan = ResolvedPlan::resolve(
         &specs,
         &selection,
-        delivery(request.install_method, Vec::new()),
+        delivery(request.install_method),
         package.as_deref(),
         version.as_deref(),
     )?;
@@ -120,7 +120,9 @@ fn run(
                 status: result.status.clone(),
             });
         }
-        ensure_none_failed(&results)?;
+        if !request.leave_out_failed {
+            ensure_none_failed(&results)?;
+        }
         return Ok((results, output));
     }
 
@@ -132,17 +134,10 @@ fn run(
             .map(|(archive, patches)| archive.load(patches))
             .collect::<Result<Vec<_>>>()
     })?;
-    let results = apply(
-        request,
-        &mut opened,
-        &bundles,
-        &selection,
-        plan,
-        emit,
-        profiler,
-    )?;
-
-    ensure_none_failed(&results)?;
+    let results = apply(&mut opened, &bundles, plan, emit, profiler)?;
+    if !request.leave_out_failed {
+        ensure_none_failed(&results)?;
+    }
 
     emit(info(format!(
         "Writing signed output to {}",
@@ -189,23 +184,18 @@ fn executed_patches(archives: &[TrustedArchive], plan: &ResolvedPlan) -> Vec<Has
         .collect()
 }
 
-fn delivery(method: InstallMethod, unmountable: Vec<String>) -> Delivery {
+fn delivery(method: InstallMethod) -> Delivery {
     match method {
         InstallMethod::Install => Delivery::Install,
-        InstallMethod::Mount => Delivery::Mount { unmountable },
+        InstallMethod::Mount => Delivery::Mount,
     }
 }
 
-/// Applies `plan` to `opened`. A mount build that finds patches editing the
-/// manifest reopens the original input into `opened` and applies again without
-/// them, since the APK still holds their edits. Each later plan covers a subset
-/// of the first, so the code loaded for it suffices.
+/// Applies `plan` to `opened`.
 fn apply(
-    request: &PatchRequest,
     opened: &mut OpenedApk,
     bundles: &[PatchBundle],
-    selection: &reseam_model::PatchSelection,
-    mut plan: ResolvedPlan,
+    plan: ResolvedPlan,
     emit: &mut impl FnMut(RunEvent),
     profiler: &mut PatchProfiler,
 ) -> Result<Vec<PatchResult>> {
@@ -215,40 +205,15 @@ fn apply(
         .iter()
         .flat_map(|bundle| bundle.extension_dex().iter().cloned())
         .collect();
-    let mut unmountable = Vec::new();
-    loop {
-        let mut ctx = PatchContext::new(&mut opened.apk);
-        ctx.set_extensions(ExtensionSet::load(&extension_paths)?);
-        let results = profiler.measure(PatchPhase::ApplyPatches, || {
-            engine::apply_patches(&mut ctx, &specs, &plan, &patches, |event| {
-                emit(event.into());
-            })
-        })?;
-        profiler.set_apply_diagnostics(apply_diagnostics(&ctx));
-        drop(ctx);
-
-        let found: Vec<String> = results
-            .iter()
-            .filter(|result| matches!(result.status, PatchStatus::Unmountable { .. }))
-            .map(|result| result.patch.clone())
-            .filter(|patch| !unmountable.contains(patch))
-            .collect();
-        if found.is_empty() {
-            return Ok(results);
-        }
-        unmountable.extend(found);
-        emit(RunEvent::Restarted {
-            unmountable: unmountable.clone(),
-        });
-        *opened = profiler.measure(PatchPhase::OpenApk, || open_input(request))?;
-        plan = ResolvedPlan::resolve(
-            &specs,
-            selection,
-            delivery(request.install_method, unmountable.clone()),
-            opened.apk.package_name().as_deref(),
-            opened.apk.version_name().as_deref(),
-        )?;
-    }
+    let mut ctx = PatchContext::new(&mut opened.apk);
+    ctx.set_extensions(ExtensionSet::load(&extension_paths)?);
+    let results = profiler.measure(PatchPhase::ApplyPatches, || {
+        engine::apply_patches(&mut ctx, &specs, plan, &patches, |event| {
+            emit(event.into());
+        })
+    })?;
+    profiler.set_apply_diagnostics(apply_diagnostics(&ctx));
+    Ok(results)
 }
 
 fn open_input(request: &PatchRequest) -> Result<OpenedApk> {

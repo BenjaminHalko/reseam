@@ -1234,6 +1234,7 @@ dependencies = [
  "quick-xml",
  "rayon",
  "reseam-dex",
+ "reseam-journal",
  "reseam-model",
  "reseam-sign",
  "reseam-storage",
@@ -1283,6 +1284,7 @@ dependencies = [
  "bitflags",
  "pretty_assertions",
  "rayon",
+ "reseam-journal",
  "reseam-storage",
  "rustc-hash",
  "sha1",
@@ -1298,10 +1300,18 @@ name = "reseam-hermes"
 version = "0.26.4"
 dependencies = [
  "rayon",
+ "reseam-journal",
  "reseam-storage",
  "rustc-hash",
  "sha1",
  "thiserror",
+]
+
+[[package]]
+name = "reseam-journal"
+version = "0.26.4"
+dependencies = [
+ "rustc-hash",
 ]
 
 [[package]]
@@ -1327,6 +1337,7 @@ dependencies = [
  "libloading 0.9.0",
  "reseam-apk",
  "reseam-hermes",
+ "reseam-journal",
  "reseam-model",
  "reseam-sign",
  "reseam-storage",

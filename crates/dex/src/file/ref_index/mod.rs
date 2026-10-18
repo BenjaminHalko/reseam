@@ -68,6 +68,9 @@ pub(crate) struct ClassMatches {
 #[derive(Debug, Clone)]
 pub(crate) struct RefIndex {
     class_start: Vec<u32>,
+    /// The classes resident when it was built, ascending. A rollback can return
+    /// one to its file record, which the index still does not cover.
+    uncovered: Vec<u32>,
     keys: PoolKeys,
     pools: Postings,
     literal_values: Vec<i64>,
@@ -174,8 +177,13 @@ impl RefIndex {
         grouped
     }
 
+    pub(crate) fn uncovered(&self) -> &[u32] {
+        &self.uncovered
+    }
+
     pub(crate) fn heap_bytes(&self) -> u64 {
         (self.class_start.len() * size_of::<u32>()
+            + self.uncovered.len() * size_of::<u32>()
             + self.pools.heap_bytes()
             + self.literal_values.len() * size_of::<i64>()
             + self.literals.heap_bytes()) as u64

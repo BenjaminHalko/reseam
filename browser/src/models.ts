@@ -51,7 +51,8 @@ export type RunEvent =
   | { type: 'info'; message: string }
   | { type: 'patch_started'; patch: string }
   | ({ type: 'patch_log' } & LogEntry)
-  | { type: 'patch_finished'; patch: string; status: PatchStatus };
+  | { type: 'patch_finished'; patch: string; status: PatchStatus }
+  | { type: 'patches_reverted'; patches: string[] };
 export type PatchPhase =
   | 'open_apk' | 'load_bundles' | 'validate_patches' | 'apply_patches'
   | 'write_unsigned_artifacts' | 'load_signing_key' | 'sign_artifacts';

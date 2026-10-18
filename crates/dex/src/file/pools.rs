@@ -97,6 +97,9 @@ impl DexFile {
     /// Marks the DEX changed before granting mutation.
     pub fn hidden_api_mut(&mut self) -> &mut Option<HiddenApiData> {
         self.touch();
+        self.journal.record(super::undo::DexPart::HiddenApi, || {
+            super::undo::DexUndo::HiddenApi(self.hidden_api.clone())
+        });
         &mut self.hidden_api
     }
 

@@ -95,6 +95,26 @@ impl StringPool {
         idx
     }
 
+    /// Drops the strings pushed after the pool held `len`.
+    pub(crate) fn truncate(&mut self, len: usize) {
+        assert!(
+            len >= self.raw_len.max(self.sorted_len),
+            "only pushed strings are truncated"
+        );
+        for i in len..self.len() {
+            let hash = hash_str(&self.owned[i - self.raw_len]);
+            let slots = self
+                .tail
+                .get_mut(&hash)
+                .expect("pushed strings are indexed");
+            slots.retain(|slot| *slot as usize != i);
+            if slots.is_empty() {
+                self.tail.remove(&hash);
+            }
+        }
+        self.owned.truncate(len - self.raw_len);
+    }
+
     pub(crate) fn compare(&self, a: u32, b: u32) -> Ordering {
         let ascii = self
             .raw_payload(a as usize)

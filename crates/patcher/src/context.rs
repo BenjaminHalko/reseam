@@ -7,6 +7,7 @@ mod extensions;
 mod files;
 mod hermes;
 mod search;
+mod undo;
 
 pub use dex::ClassFields;
 pub use extensions::ExtensionSet;
@@ -59,6 +60,7 @@ pub struct PatchContext<'a> {
     method: Option<CachedMethod>,
     extensions: ExtensionSet,
     hermes: Option<hermes::HermesSession>,
+    journal: reseam_journal::Journal<undo::Part, undo::Undo>,
 }
 
 struct CachedSkeleton {
@@ -81,6 +83,7 @@ impl<'a> PatchContext<'a> {
             method: None,
             extensions: ExtensionSet::app_runtime(),
             hermes: None,
+            journal: reseam_journal::Journal::default(),
         }
     }
 
@@ -131,5 +134,5 @@ pub fn code_mut(
     dex: &mut DexFile,
     m: MethodLocation,
 ) -> crate::error::Result<Option<&mut CodeItem>> {
-    Ok(method_mut(dex, m)?.and_then(|method| method.code.as_mut()))
+    Ok(method_mut(dex, m)?.and_then(EncodedMethod::code_mut))
 }

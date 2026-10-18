@@ -218,7 +218,8 @@ pub fn read_class_data(
                     access_flags: header.access_flags,
                     code: (header.code_off != 0)
                         .then(|| read_code_item(source, header.code_off, opts))
-                        .transpose()?,
+                        .transpose()?
+                        .map(std::sync::Arc::new),
                 })
             })
             .collect::<Result<Vec<_>>>()

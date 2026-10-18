@@ -97,6 +97,12 @@ async function operation(request: any): Promise<unknown> {
         profile = undefined; revision = undefined;
       }
     }
+    case 'savepoint': {
+      const loader = loaders.get(request.handle);
+      if (!loader) throw new Error('Browser patch loader is closed');
+      await loader.loader.savepoint(request.action, request.savepoint);
+      return null;
+    }
     case 'close': {
       const loader = loaders.get(request.handle);
       if (loader) {

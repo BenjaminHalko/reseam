@@ -188,6 +188,7 @@ fn check_prepared_trust(inspection_request: &crate::InspectRequest, output: &Pat
                     signing: None,
                     dry_run: false,
                     install_method: InstallMethod::Install,
+                    leave_out_failed: false,
                 },
                 |_| {},
             )
@@ -346,6 +347,7 @@ fn incompatible_inputs_and_output_fail_before_loading_patches() {
             signing: None,
             dry_run: true,
             install_method: InstallMethod::Install,
+            leave_out_failed: false,
         },
         |_| {},
     )

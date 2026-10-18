@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use super::DexWriter;
-use super::instruction_writer::encode_instructions;
 use super::intern::ByteInterner;
 use super::plan::{WriteClass, WritePlan};
 use super::raw_code::{copy_code_item, copy_debug_info};
 use super::sink::DexSink;
 use super::sort::Remap;
-use crate::encoding::leb128::{write_sleb128, write_uleb128};
 use crate::error::Result;
 use crate::read::class::read_class_skeleton_at;
 use crate::read::code::read_code_item;
@@ -18,6 +16,10 @@ use crate::types::class::{ClassData, EncodedField};
 use crate::types::code::CodeItem;
 use crate::types::header::ParseOptions;
 use crate::types::map::{MapItem, TYPE_CODE_ITEM, TYPE_DEBUG_INFO_ITEM};
+
+mod item;
+
+use item::write_code_item;
 
 pub(crate) struct MethodLayout {
     pub method: MethodIdx,
@@ -121,7 +123,7 @@ impl CodeEmitter {
                 let code_off = match &method.code {
                     Some(code) => {
                         if let Some(remap) = remap {
-                            let mut code = code.clone();
+                            let mut code = CodeItem::clone(code);
                             if code.debug_info.as_ref().is_some_and(|metadata| {
                                 !w.options.debug_info.keeps(metadata, w.original.as_ref())
                             }) {
@@ -277,63 +279,4 @@ impl CodeEmitter {
         self.code_debug_item.push((off, item));
         Ok(off)
     }
-}
-
-pub(crate) fn write_code_item<S: DexSink>(w: &mut DexWriter<S>, code: &CodeItem) -> Result<()> {
-    w.write_u16(code.registers_size);
-    w.write_u16(code.ins_size);
-    w.write_u16(code.compute_outs_size());
-    w.write_u16(
-        u16::try_from(code.tries.len())
-            .map_err(|_| crate::error::invalid("code item", "more than 65535 try ranges"))?,
-    );
-    w.write_u32(0);
-    let insns = encode_instructions(&code.instructions)?;
-    w.write_u32(insns.len() as u32);
-    for unit in &insns {
-        w.write_u16(*unit);
-    }
-
-    if !code.tries.is_empty() {
-        if !insns.len().is_multiple_of(2) {
-            w.write_u16(0);
-        }
-
-        let mut handler_buf: Vec<u8> = Vec::new();
-        write_uleb128(&mut handler_buf, code.catch_handlers.len() as u32);
-        let mut handler_byte_offsets = Vec::new();
-        for handler in &code.catch_handlers {
-            handler_byte_offsets.push(handler_buf.len());
-            let size = if handler.catch_all_addr.is_some() {
-                -(handler.typed_catches.len() as i32)
-            } else {
-                handler.typed_catches.len() as i32
-            };
-            write_sleb128(&mut handler_buf, size);
-            for tc in &handler.typed_catches {
-                write_uleb128(&mut handler_buf, tc.exception_type.0);
-                write_uleb128(&mut handler_buf, tc.addr);
-            }
-            if let Some(addr) = handler.catch_all_addr {
-                write_uleb128(&mut handler_buf, addr);
-            }
-        }
-
-        for t in &code.tries {
-            w.write_u32(t.start_addr);
-            w.write_u16(t.insn_count);
-            let offset = handler_byte_offsets.get(t.handler_idx).ok_or_else(|| {
-                crate::error::invalid("catch handler", "try refers to an absent handler")
-            })?;
-            w.write_u16(u16::try_from(*offset).map_err(|_| {
-                crate::error::invalid(
-                    "catch handler",
-                    "referenced handler offset exceeds 65535 bytes",
-                )
-            })?);
-        }
-
-        w.write(&handler_buf);
-    }
-    Ok(())
 }

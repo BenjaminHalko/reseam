@@ -117,7 +117,13 @@ public final class BrowserHost {
             } finally { endInvocation.invoke(null); }
         }
 
-        public void close() throws Exception { patches.clear(); references.clear(); description = null; loader.close(); }
+        public void savepoint(String action, int savepoint) throws Exception {
+            String method = action.equals("open") ? "openSavepoint" : action.equals("release") ? "releaseSavepoint" : action.equals("rollback") ? "rollbackTo" : null;
+            if (method == null) throw new IllegalArgumentException("Unknown savepoint action");
+            run.getClass().getMethod(method, int.class).invoke(run, savepoint);
+        }
+
+                public void close() throws Exception { patches.clear(); references.clear(); description = null; loader.close(); }
 
         private Object describe(String bundle, String reference, Object patch) throws Exception {
             Object name = get(patch, "getName");

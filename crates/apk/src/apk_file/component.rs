@@ -17,6 +17,7 @@ use crate::resources::ResourceTable;
 use crate::zip::reader::{self, Archive};
 
 mod edits;
+mod undo;
 
 pub use edits::Compression;
 pub(super) use edits::EntryEdit;
@@ -29,8 +30,10 @@ pub struct ApkComponent {
     manifest_revision: u64,
     resources: Resources,
     edits: BTreeMap<EntryName, EntryEdit>,
+    journal: reseam_journal::Journal<undo::Part, undo::Undo>,
 }
 
+#[derive(Clone)]
 enum Resources {
     Absent,
     Deferred,
@@ -59,6 +62,7 @@ impl ApkComponent {
             manifest_revision: 0,
             resources,
             edits: BTreeMap::new(),
+            journal: reseam_journal::Journal::default(),
         };
         if loading == Loading::Eager {
             component.resources()?;
@@ -85,8 +89,8 @@ impl ApkComponent {
     }
 
     pub fn manifest_mut(&mut self) -> &mut AxmlDocument {
-        self.edits
-            .insert(MANIFEST_ENTRY.into(), EntryEdit::Manifest);
+        self.keep_manifest();
+        self.set_edit(MANIFEST_ENTRY.into(), EntryEdit::Manifest);
         self.manifest_revision += 1;
         &mut self.manifest
     }
@@ -113,11 +117,14 @@ impl ApkComponent {
 
     pub fn resources_mut(&mut self) -> Result<Option<&mut ResourceTable>> {
         self.load_resources()?;
-        let Resources::Loaded(table) = &mut self.resources else {
+        if !matches!(self.resources, Resources::Loaded(_)) {
             return Ok(None);
+        }
+        self.keep_resources();
+        self.set_edit(RESOURCES_ENTRY.into(), EntryEdit::Resources);
+        let Resources::Loaded(table) = &mut self.resources else {
+            unreachable!("the table was loaded above");
         };
-        self.edits
-            .insert(RESOURCES_ENTRY.into(), EntryEdit::Resources);
         Ok(Some(table))
     }
 

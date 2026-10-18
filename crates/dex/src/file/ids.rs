@@ -122,6 +122,26 @@ impl<T: IdRecord> IdTable<T> {
         i
     }
 
+    /// Drops the entries pushed after the table held `len`.
+    pub(crate) fn truncate(&mut self, len: usize) {
+        assert!(
+            len >= self.raw_len.max(self.sorted_len),
+            "only pushed entries are truncated"
+        );
+        for i in len..self.len() {
+            let hash = hash_key(&self.tail[i - self.raw_len]);
+            let slots = self
+                .index
+                .get_mut(&hash)
+                .expect("pushed entries are indexed");
+            slots.retain(|slot| *slot as usize != i);
+            if slots.is_empty() {
+                self.index.remove(&hash);
+            }
+        }
+        self.tail.truncate(len - self.raw_len);
+    }
+
     /// Index of the entry whose sort key equals `probe`'s.
     pub fn find(&self, probe: &T) -> Option<usize> {
         if let Ok(i) = self.binary_search(probe) {
