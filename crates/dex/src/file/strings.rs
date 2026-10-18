@@ -8,6 +8,8 @@ use std::hash::{Hash, Hasher};
 use rustc_hash::{FxHashMap, FxHasher};
 use smallvec::SmallVec;
 
+mod lookup;
+
 use super::DexBytes;
 use crate::encoding::leb128::{read_uleb128_with_opts, write_uleb128};
 use crate::encoding::mutf8::{decode_mutf8_lossy, encode_mutf8, utf16_len, utf16_units};
@@ -15,7 +17,7 @@ use crate::error::{Result, invalid, invalid_mutf8};
 use crate::read::u32_at;
 use crate::types::StringIdx;
 use crate::types::header::ParseOptions;
-use crate::util::sort::{mutf8_compare, mutf8_units};
+use crate::util::sort::{ascii_order, mutf8_compare, mutf8_units};
 
 /// The string table left in the file: raw entries are read through the
 /// `string_ids` table on access, and only strings added after parse are owned.
@@ -82,34 +84,6 @@ impl StringPool {
         (0..self.len()).map(|i| self.get(StringIdx(i as u32)))
     }
 
-    pub fn find(&self, s: &str) -> Option<StringIdx> {
-        let bmp = s.chars().all(|c| (c as u32) < 0x10000);
-        let mut encoded = None;
-        let mut lo = 0usize;
-        let mut hi = self.sorted_len;
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            let ord = match self.plain(mid) {
-                Some(bytes) if bmp => bytes.cmp(s.as_bytes()),
-                _ => mutf8_compare(
-                    &self.mutf8(mid),
-                    encoded.get_or_insert_with(|| encode_mutf8(s)),
-                ),
-            };
-            match ord {
-                Ordering::Less => lo = mid + 1,
-                Ordering::Greater => hi = mid,
-                Ordering::Equal => return Some(StringIdx(mid as u32)),
-            }
-        }
-        self.tail
-            .get(&hash_str(s))?
-            .iter()
-            .copied()
-            .find(|&i| mutf8_units(&self.mutf8(i as usize)).eq(s.encode_utf16()))
-            .map(StringIdx)
-    }
-
     pub fn intern(&mut self, s: &str) -> StringIdx {
         self.find(s).unwrap_or_else(|| self.push(s))
     }
@@ -122,6 +96,13 @@ impl StringPool {
     }
 
     pub(crate) fn compare(&self, a: u32, b: u32) -> Ordering {
+        let ascii = self
+            .raw_payload(a as usize)
+            .zip(self.raw_payload(b as usize))
+            .and_then(|(x, y)| ascii_order(x, y));
+        if let Some(order) = ascii {
+            return order;
+        }
         // A raw payload that is valid UTF-8 holds only U+0001..U+FFFF (NUL and
         // supplementary characters have non-UTF-8 encodings in MUTF-8), and for
         // that range byte order equals UTF-16 code unit order. Otherwise compare
@@ -155,6 +136,11 @@ impl StringPool {
             out.push(0);
             Cow::Owned(out)
         }
+    }
+
+    /// How many leading entries are in DEX sort order.
+    pub(crate) fn sorted_len(&self) -> usize {
+        self.sorted_len
     }
 
     /// Whether every entry is already in DEX sort order.
@@ -210,9 +196,18 @@ impl StringPool {
         &self.raw_bytes()[off as usize + start..off as usize + end]
     }
 
+    /// A raw entry's payload through the end of the buffer, so its terminator
+    /// ends it; `None` for an owned entry.
+    fn raw_payload(&self, i: usize) -> Option<&[u8]> {
+        (i < self.raw_len).then(|| {
+            let item = &self.raw_bytes()[self.raw_offset(i) as usize..];
+            &item[payload_start(item)..]
+        })
+    }
+
     fn payload_range(&self, off: u32) -> (usize, usize) {
         let item = &self.raw_bytes()[off as usize..];
-        let start = 1 + item.iter().take_while(|&&b| b & 0x80 != 0).count();
+        let start = payload_start(item);
         let end = start
             + item[start..]
                 .iter()
@@ -233,6 +228,11 @@ impl<S: Into<Box<str>>> FromIterator<S> for StringPool {
     }
 }
 
+/// Where an item's payload starts, past its ULEB128 length.
+fn payload_start(item: &[u8]) -> usize {
+    1 + item.iter().take_while(|&&b| b & 0x80 != 0).count()
+}
+
 fn validate_item(buf: &[u8], off: u32, opts: ParseOptions) -> Result<()> {
     let (declared, leb_size) = read_uleb128_with_opts(buf, off as usize, opts)?;
     let start = off as usize + leb_size;
@@ -243,7 +243,12 @@ fn validate_item(buf: &[u8], off: u32, opts: ParseOptions) -> Result<()> {
         .iter()
         .position(|&b| b == 0)
         .ok_or_else(|| invalid_mutf8(start, "missing NUL terminator"))?;
-    let actual = utf16_units(&rest[..len], start, opts)?;
+    let payload = &rest[..len];
+    let actual = if payload.is_ascii() {
+        len as u32
+    } else {
+        utf16_units(payload, start, opts)?
+    };
     if actual != declared {
         return Err(invalid(
             "string data",

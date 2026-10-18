@@ -1,28 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::io::{self, BufWriter, Read, Seek, Write};
+use std::fs::File;
 
 use crate::Result;
+use crate::zip::writer::{Encoding, Writer};
 
-/// Streams one DEX entry into a ZIP archive. Both native DEX workers and browser
-/// compression workers use this function so ZIP metadata and DEFLATE agree.
-pub fn compress_dex_entry<W: Write + Seek>(
-    mut source: impl Read,
-    destination: W,
+/// Writes `source` as the single deflated entry `name` of a ZIP at
+/// `destination`. Native DEX workers and the browser's compression workers
+/// both use it, so the entries they hand the APK writer agree.
+pub fn compress_dex_entry(
+    source: &File,
+    destination: File,
     name: &str,
-    level: i64,
-) -> Result<W> {
-    let mut archive = zip::ZipWriter::new(BufWriter::new(destination));
-    archive.start_file(
-        name,
-        zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .compression_level(Some(level)),
-    )?;
-    io::copy(&mut source, &mut archive)?;
-    Ok(archive
-        .finish()?
-        .into_inner()
-        .map_err(io::IntoInnerError::into_error)?)
+    level: u32,
+) -> Result<File> {
+    let mut archive = Writer::new(destination);
+    archive.write_file(name, source, Encoding::Deflated { level })?;
+    archive.finish()
 }

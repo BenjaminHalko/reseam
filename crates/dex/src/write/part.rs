@@ -4,7 +4,7 @@
 use super::MAX_POOL_SIZE;
 use crate::error::{Result, invalid};
 use crate::file::DexFile;
-use crate::references::{self as refs, RefSink, pool_len};
+use crate::references::{self as refs, Bodies, RefSink, pool_len};
 use crate::types::Pool;
 use crate::types::method_handle::MethodHandleMember;
 
@@ -161,12 +161,19 @@ impl<'a> Packer<'a> {
             dex.classes.resident(class_idx),
             dex.classes.raw_def(class_idx),
         ) {
-            (Some(class), _) => refs::class(self, class, dex)?,
+            (Some(class), _) => refs::class(self, class, dex, Bodies::Visit)?,
             (None, Some(raw)) => {
                 let buf = dex.raw_buffer().ok_or_else(|| {
                     invalid("DEX source", "deferred classes require the original buffer")
                 })?;
-                refs::raw_class(self, buf, &raw, dex.parse_options, dex.write_options())?;
+                refs::raw_class(
+                    self,
+                    buf,
+                    &raw,
+                    dex.parse_options,
+                    dex.write_options(),
+                    Bodies::Visit,
+                )?;
             }
             (None, None) => {
                 return Err(invalid(

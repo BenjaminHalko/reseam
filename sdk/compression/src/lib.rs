@@ -44,7 +44,8 @@ pub unsafe extern "C" fn compression_run(
     let result = std::str::from_utf8(name)
         .map_err(|error| error.to_string())
         .and_then(|name| {
-            reseam_apk::compression::compress_dex_entry(input, output, name, level)
+            let level = u32::try_from(level).map_err(|error| error.to_string())?;
+            reseam_apk::compression::compress_dex_entry(&input, output, name, level)
                 .map(drop)
                 .map_err(|error| error.to_string())
         });

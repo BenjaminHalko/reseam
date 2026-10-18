@@ -198,7 +198,7 @@ internal abstract class QuerySpec<T : Any, S : RankScope>(private val kind: Stri
                 ?: error(
                     noMatchMessage(
                         kind,
-                        diagnosed(runtime, plan, evaluated).noMatchReport(debugName),
+                        diagnose(runtime, plan).noMatchReport(debugName),
                     )
                 )
         val runnerUp = evaluated.accepted.getOrNull(1)
@@ -228,47 +228,61 @@ internal abstract class QuerySpec<T : Any, S : RankScope>(private val kind: Stri
         return Resolution(evaluated.accepted.map { it.value }, report)
     }
 
-    /** A failed evaluation redone over every seed, so its report names what emptied the query. */
-    private fun diagnosed(runtime: PatchRuntime, plan: QueryPlan<T>, failed: Evaluated<T>) =
-        if (plan.seeds.isEmpty()) failed else evaluate(runtime, runtime.index.exhaustivePool(plan))
+    /**
+     * A failed evaluation redone over every seed, keeping the candidates it rejected, so its report
+     * names what emptied the query and what came closest.
+     */
+    private fun diagnose(runtime: PatchRuntime, plan: QueryPlan<T>) =
+        evaluate(runtime, runtime.index.exhaustivePool(plan), mutableListOf())
 
-    private fun evaluate(runtime: PatchRuntime, pool: CandidatePool<T>): Evaluated<T> {
+    /** Collects rejected candidates into [rejected] when given; only failure reports read them. */
+    private fun evaluate(
+        runtime: PatchRuntime,
+        pool: CandidatePool<T>,
+        rejected: MutableList<Rejected<T>>? = null,
+    ): Evaluated<T> {
         val scored = mutableListOf<Scored<T>>()
-        val rejected = mutableListOf<Rejected<T>>()
         for (batch in pool.candidates.ifEmpty { pool.nearMissSeed }.chunked(CANDIDATE_BATCH)) {
             prefetch(runtime, batch)
             for (value in batch) {
                 val failure = mismatch(value, runtime)
                 if (failure != null) {
-                    rejected.addBounded(Rejected(value, failure)) { describe(it.value) }
+                    rejected?.addBounded(Rejected(value, failure)) { describe(it.value) }
                     continue
                 }
                 val scope = rankScope(runtime.index, value)
-                val scores = rankers.map { it.label to it.block(scope) }
-                scored +=
-                    Scored(
-                        value,
-                        scores.sumOf { it.second },
-                        pool.pipeline + matchReasons() + scores.map { "${it.first}=${it.second}" },
-                    )
+                scored += Scored(value, rankers.map { it.label to it.block(scope) })
             }
         }
         return Evaluated(
-            accepted =
-                scored.sortedWith(
-                    compareByDescending<Scored<T>> { it.score }.thenBy { describe(it.value) }
-                ),
+            accepted = ranked(scored),
             considered = pool.considered,
             pipeline = pool.pipeline,
             exhaustedBy = pool.exhaustedBy,
             rejected =
                 rejected
+                    .orEmpty()
                     .sortedBy { describe(it.value) }
                     .take(3)
                     .map { "${describe(it.value)} [missed: ${it.failure}]" },
             describe = ::describe,
+            reasons = {
+                pool.pipeline + matchReasons() + it.ranks.map { (label, score) -> "$label=$score" }
+            },
         )
     }
+
+    /** Best score first, ties in description order; each description is built once. */
+    private fun ranked(scored: List<Scored<T>>): List<Scored<T>> =
+        if (scored.size < 2) scored
+        else
+            scored
+                .map { it to describe(it.value) }
+                .sortedWith(
+                    compareByDescending<Pair<Scored<T>, String>> { it.first.score }
+                        .thenBy { it.second }
+                )
+                .map { it.first }
 }
 
 internal fun List<Opcode?>.toPattern() = map { it?.value ?: -1 }.toIntArray()

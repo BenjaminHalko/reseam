@@ -34,6 +34,13 @@ pub(crate) fn contains(archive: &Archive, name: &str) -> bool {
     archive.index_for_name(name).is_some()
 }
 
+pub(crate) fn is_stored(archive: &Archive, name: &str) -> Result<bool> {
+    let index = archive
+        .index_for_name(name)
+        .ok_or_else(|| invalid("zip entry", format!("{name}: not in the archive")))?;
+    Ok(archive.clone().by_index_raw(index)?.compression() == zip::CompressionMethod::Stored)
+}
+
 pub(crate) fn read_entry(archive: &mut Archive, name: &str) -> Result<Vec<u8>> {
     let mut entry = archive.by_name(name)?;
     let mut buf = Vec::new();

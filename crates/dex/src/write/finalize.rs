@@ -4,6 +4,7 @@
 use super::plan::WritePlan;
 use crate::error::Result;
 use crate::types::class::NO_INDEX;
+use sha1::Digest;
 use zlib_rs::adler32::{adler32, adler32_combine};
 
 use super::sink::DexSink;
@@ -111,17 +112,17 @@ pub(crate) fn sign_member<S: DexSink>(w: &mut DexWriter<S>, span: MemberSpan) ->
     let header_base = span.header as usize;
     let logical_end = span.end as usize;
 
-    let mut signature = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
+    let mut signature = sha1::Sha1::new();
     let mut body_checksum = 1;
     w.sink.digest(header_base + 32, logical_end, &mut |chunk| {
         signature.update(chunk);
         body_checksum = adler32(body_checksum, chunk);
     })?;
-    let signature = signature.finish();
-    w.patch(header_base + 0x0c, signature.as_ref());
+    let signature = signature.finalize();
+    w.patch(header_base + 0x0c, &signature);
     // The checksum covers the signature too, which is only known now.
     let checksum = adler32_combine(
-        adler32(1, signature.as_ref()),
+        adler32(1, &signature),
         body_checksum,
         (logical_end - header_base - 32) as u64,
     );

@@ -1,0 +1,198 @@
+// SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+use std::collections::HashSet;
+
+use super::super::{ClassLocation, FingerprintLocation, MethodLocation, PatchContext};
+use super::{fingerprint_location, method_location};
+use crate::error::Result;
+use reseam_apk::reseam_dex::{
+    Fingerprint, InstructionPattern, MethodIdx, RefKey, RefQuery, StringIdx,
+};
+
+impl PatchContext<'_> {
+    /// Every method whose prototype satisfies each given filter (exact return
+    /// type, exact parameter list, a parameter of `contains` type anywhere),
+    /// found through the id tables; only the classes defining them are read.
+    /// A DEX missing any of the named types has no matches.
+    pub fn find_methods_by_proto(
+        &self,
+        return_type: Option<&str>,
+        parameters: Option<&[&str]>,
+        contains: Option<&str>,
+    ) -> Result<Vec<MethodLocation>> {
+        self.scan_all("methods by prototype", |dex_idx, dex| {
+            let resolve = |t: &str| dex.find_type_idx(t).ok_or(());
+            let resolved = (|| {
+                Ok::<_, ()>((
+                    return_type.map(resolve).transpose()?,
+                    parameters
+                        .map(|types| {
+                            types
+                                .iter()
+                                .map(|t| resolve(t))
+                                .collect::<std::result::Result<Vec<_>, ()>>()
+                        })
+                        .transpose()?,
+                    contains.map(resolve).transpose()?,
+                ))
+            })();
+            let Ok((return_type, parameters, contains)) = resolved else {
+                return Ok(Vec::new());
+            };
+            let matching: Vec<bool> = dex
+                .prototypes()
+                .iter()
+                .map(|proto| {
+                    return_type.is_none_or(|t| proto.return_type == t)
+                        && parameters
+                            .as_deref()
+                            .is_none_or(|types| proto.parameters.as_slice() == types)
+                        && contains.is_none_or(|t| proto.parameters.contains(&t))
+                })
+                .collect();
+            let methods: Vec<MethodIdx> = dex
+                .methods()
+                .iter()
+                .enumerate()
+                .filter(|(_, method)| matching[method.proto.0 as usize])
+                .map(|(index, _)| MethodIdx(index as u32))
+                .collect();
+            let hits = dex.scan_method_definitions(&methods, |view| Ok(Some(view.hit())))?;
+            Ok(hits
+                .iter()
+                .map(|hit| method_location(dex_idx, hit))
+                .collect())
+        })
+    }
+
+    pub fn find_methods_by_name(&self, method_name: &str) -> Result<Vec<MethodLocation>> {
+        self.scan_all("methods by name", |dex_idx, dex| {
+            let Some(name) = dex.find_string_idx(method_name) else {
+                return Ok(Vec::new());
+            };
+            let methods: Vec<MethodIdx> = dex
+                .methods()
+                .iter()
+                .enumerate()
+                .filter(|(_, method)| method.name == name)
+                .map(|(index, _)| MethodIdx(index as u32))
+                .collect();
+            let hits = dex.scan_method_definitions(&methods, |view| Ok(Some(view.hit())))?;
+            Ok(hits
+                .iter()
+                .map(|hit| method_location(dex_idx, hit))
+                .collect())
+        })
+    }
+
+    pub fn find_method_by_name(&self, method_name: &str) -> Result<Option<MethodLocation>> {
+        self.scan_first("method by name", |dex_idx, dex| {
+            Ok(dex
+                .find_method_by_name(method_name)?
+                .map(|hit| method_location(dex_idx, &hit)))
+        })
+    }
+
+    pub fn find_methods_by_strings(&self, strings: &[&str]) -> Result<Vec<MethodLocation>> {
+        self.scan_all("methods by strings", |dex_idx, dex| {
+            let hits = dex.find_methods_by_strings(strings)?;
+            Ok(hits
+                .iter()
+                .map(|hit| method_location(dex_idx, hit))
+                .collect())
+        })
+    }
+
+    pub fn find_methods_with_opcodes(
+        &self,
+        opcodes: &[InstructionPattern],
+    ) -> Result<Vec<MethodLocation>> {
+        self.scan_all("methods by opcodes", |dex_idx, dex| {
+            let hits = dex.find_methods_with_opcodes(opcodes)?;
+            Ok(hits
+                .iter()
+                .map(|hit| method_location(dex_idx, hit))
+                .collect())
+        })
+    }
+
+    pub fn find_method_by_fingerprint(
+        &self,
+        fp: &Fingerprint,
+    ) -> Result<Option<FingerprintLocation>> {
+        self.scan_first("method by fingerprint", |dex_idx, dex| {
+            Ok(dex
+                .find_method_by_fingerprint(fp)?
+                .map(|hit| fingerprint_location(dex_idx, hit)))
+        })
+    }
+
+    pub fn find_methods_by_fingerprint(
+        &self,
+        fp: &Fingerprint,
+    ) -> Result<Vec<FingerprintLocation>> {
+        self.scan_all("methods by fingerprint", |dex_idx, dex| {
+            let hits = dex.find_methods_by_fingerprint(fp)?;
+            Ok(hits
+                .into_iter()
+                .map(|hit| fingerprint_location(dex_idx, hit))
+                .collect())
+        })
+    }
+
+    /// Visits every method in the APK in DEX, class, then member order
+    /// without collecting them first.
+    pub fn for_each_method(&self, mut visit: impl FnMut(MethodLocation)) -> Result<()> {
+        for (dex_idx, dex) in self.dex().iter().enumerate() {
+            dex.scan_methods_find(&RefQuery::default(), |view| {
+                visit(method_location(dex_idx, &view.hit()));
+                Ok(None::<()>)
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn find_classes_with_instance_field(&self, field_type: &str) -> Result<Vec<ClassLocation>> {
+        self.scan_all("classes with instance field", |dex_idx, dex| {
+            let Some(wanted) = dex.find_type_idx(field_type) else {
+                return Ok(Vec::new());
+            };
+            let mut matches = Vec::new();
+            for class_idx in 0..dex.classes().len() {
+                if dex
+                    .decode_class_fields(class_idx)?
+                    .is_some_and(|(_, fields)| {
+                        fields.iter().any(|f| dex.field_id(f.field).type_ == wanted)
+                    })
+                {
+                    matches.push(ClassLocation { dex_idx, class_idx });
+                }
+            }
+            Ok(matches)
+        })
+    }
+
+    /// Methods referencing a string that starts with `prefix`, found through
+    /// the string pool's sorted range and the reference index.
+    pub fn find_methods_by_string_prefix(&self, prefix: &str) -> Result<Vec<MethodLocation>> {
+        self.scan_all("methods by string prefix", |dex_idx, dex| {
+            let matches: HashSet<StringIdx> =
+                dex.strings().with_prefix(prefix).into_iter().collect();
+            if matches.is_empty() {
+                return Ok(Vec::new());
+            }
+            let query = RefQuery::any_of(matches.iter().map(|&s| RefKey::String(s)));
+            let hits = dex.scan_methods_collect(&query, |view| {
+                let found = view.any_instruction(|insn| {
+                    insn.string_ref().is_some_and(|s| matches.contains(&s))
+                })?;
+                Ok(found.then(|| view.hit()))
+            })?;
+            Ok(hits
+                .iter()
+                .map(|hit| method_location(dex_idx, hit))
+                .collect())
+        })
+    }
+}

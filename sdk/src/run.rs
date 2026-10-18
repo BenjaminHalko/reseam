@@ -11,6 +11,7 @@ use reseam_patcher::{Patch, PatchSpec};
 use crate::TrustStore;
 use crate::error::Problem;
 use crate::inspect::{OpenedApk, PreparedInspection, TrustedArchive, open_apk, open_bundles};
+use crate::memory::release_process_memory;
 use crate::metrics::{ApplyDiagnostics, PatchPhase, PatchProfiler};
 use crate::output::write_signed;
 use crate::{InstallMethod, PatchArtifact, PatchOutcome, PatchRequest, RunEvent};
@@ -147,15 +148,17 @@ fn run(
         "Writing signed output to {}",
         output.path().display()
     )));
+    // Patching is over, so its search indexes and resident source pages go
+    // before writing, the run's peak.
     for index in 0..opened.apk.dex().len() {
-        if opened.apk.is_added_dex(index) {
-            continue;
-        }
+        let added = opened.apk.is_added_dex(index);
         let dex = opened
             .apk
             .dex_mut(index)
             .expect("index is within the DEX container");
-        if dex.is_dirty() {
+        dex.release_search_caches();
+        dex.release_pages();
+        if !added && dex.is_dirty() {
             dex.set_write_options(reseam_apk::reseam_dex::write::WriteOptions {
                 debug_info: reseam_apk::reseam_dex::write::MetadataPolicy::OmitOriginal,
                 link_data: reseam_apk::reseam_dex::write::LinkPolicy::Omit,
@@ -163,6 +166,7 @@ fn run(
             });
         }
     }
+    release_process_memory();
     write_signed(opened.apk, &output, request.signing.as_ref(), profiler)?;
     Ok((results, output))
 }
@@ -315,33 +319,3 @@ fn apply_diagnostics(ctx: &PatchContext<'_>) -> ApplyDiagnostics {
         jvm: reseam_patcher::jvm_heap_stats(),
     }
 }
-
-// Current RSS can fall after collection and cache purging; process high-water
-// counters deliberately remain unchanged.
-fn release_process_memory() {
-    reseam_patcher::release_runtime_memory();
-    purge_native_heap();
-}
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn purge_native_heap() {
-    // SAFETY: malloc_trim only releases free memory held by the allocator.
-    unsafe {
-        libc::malloc_trim(0);
-    }
-}
-
-#[cfg(target_os = "android")]
-fn purge_native_heap() {
-    const M_PURGE: libc::c_int = -101;
-    unsafe extern "C" {
-        fn mallopt(param: libc::c_int, value: libc::c_int) -> libc::c_int;
-    }
-    // SAFETY: M_PURGE asks scudo to release cached free pages; it touches no live allocation.
-    unsafe {
-        mallopt(M_PURGE, 0);
-    }
-}
-
-#[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_os = "android")))]
-fn purge_native_heap() {}

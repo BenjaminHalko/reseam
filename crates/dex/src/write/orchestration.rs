@@ -42,6 +42,7 @@ impl<S: DexSink> DexWriter<S> {
         let class_ann_datas = annotations::write_annotations(self, plan)?;
 
         let layouts = code::write_code_and_debug(self, plan)?;
+        dex.release_pages();
         class_data::write_class_data_items(self, &layouts);
 
         let string_data_start = self.pos();
@@ -51,6 +52,7 @@ impl<S: DexSink> DexWriter<S> {
             self.string_data_offsets.push(off);
             self.write(&plan.string_item(i));
         }
+        dex.release_pages();
         if plan.string_count() > 0 {
             self.map_entries.push(MapItem {
                 type_code: TYPE_STRING_DATA_ITEM,

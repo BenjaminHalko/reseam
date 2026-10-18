@@ -73,7 +73,7 @@ impl MultiDexContainer {
                 + dex.prototypes.heap_bytes()
                 + dex.fields.heap_bytes()
                 + dex.methods.heap_bytes();
-            breakdown.class_def_bytes += dex.classes.heap_bytes() + dex.ref_filter_heap_bytes();
+            breakdown.class_def_bytes += dex.classes.heap_bytes() + dex.ref_index_heap_bytes();
         }
         breakdown.materialized = self.materialization_stats();
         breakdown

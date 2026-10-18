@@ -49,10 +49,15 @@ impl RawInstruction {
         let operand = index_operands(self.opcode)
             .iter()
             .find(|operand| operand.pool == pool)?;
-        Some(match operand.width {
-            IndexWidth::U16 => u32::from(u16_at(buf, self.unit_off + operand.at)),
-            IndexWidth::U32 => u32_at(buf, self.unit_off + operand.at),
-        })
+        Some(operand.read(buf, self.unit_off))
+    }
+
+    /// The method, field or string the instruction refers to, if any.
+    pub(crate) fn member_or_string_ref(&self, buf: &[u8]) -> Option<(Pool, u32)> {
+        let operand = index_operands(self.opcode)
+            .iter()
+            .find(|operand| matches!(operand.pool, Pool::Method | Pool::Field | Pool::String))?;
+        Some((operand.pool, operand.read(buf, self.unit_off)))
     }
 
     /// The literal of a `const*` or `*-int/lit*` instruction, with the same
@@ -83,6 +88,15 @@ pub(crate) struct IndexOperand {
     pub pool: Pool,
     pub at: usize,
     pub width: IndexWidth,
+}
+
+impl IndexOperand {
+    fn read(&self, buf: &[u8], unit_off: usize) -> u32 {
+        match self.width {
+            IndexWidth::U16 => u32::from(u16_at(buf, unit_off + self.at)),
+            IndexWidth::U32 => u32_at(buf, unit_off + self.at),
+        }
+    }
 }
 
 macro_rules! define_index_operands {

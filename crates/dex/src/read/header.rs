@@ -164,11 +164,8 @@ fn verify_integrity(
     }
 
     if !(opts.signature == crate::types::header::Verification::Skip) {
-        let computed = ring::digest::digest(
-            &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
-            &buf[header_off + 32..logical_end],
-        );
-        if computed.as_ref() != signature.as_slice() {
+        let computed = <sha1::Sha1 as sha1::Digest>::digest(&buf[header_off + 32..logical_end]);
+        if computed.as_slice() != signature.as_slice() {
             return Err(signature_mismatch());
         }
     }

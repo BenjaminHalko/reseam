@@ -6,6 +6,7 @@
 mod error;
 mod inspect;
 mod install;
+mod memory;
 mod metrics;
 mod output;
 mod run;

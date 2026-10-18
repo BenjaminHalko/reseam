@@ -8,8 +8,9 @@ use std::thread::Scope;
 
 use reseam_dex::{DexFile, WriteLayout};
 
-use super::{DexJob, WrittenDex, serialize_dex};
+use super::{Compression, DexEntry, DexJob, WrittenDex, serialize_dex, stored_entry};
 use crate::error::{Result, invalid};
+use crate::zip::COPY_BUFFER;
 
 #[link(wasm_import_module = "reseam_compression")]
 unsafe extern "C" {
@@ -21,8 +22,8 @@ unsafe extern "C" {
 struct Pending {
     ticket: Option<u32>,
     // Files outlive their worker job, including when a preceding job fails.
-    _input: File,
-    output: Option<File>,
+    _input: Option<File>,
+    entry: Option<DexEntry>,
     layouts: Vec<WriteLayout>,
 }
 
@@ -53,7 +54,8 @@ pub(in crate::apk_file) struct DexEntryStream<'a> {
     pending: VecDeque<Pending>,
     scheduled: usize,
     next: usize,
-    level: i64,
+    level: u32,
+    buffer: Vec<u8>,
 }
 
 impl<'a> DexEntryStream<'a> {
@@ -62,7 +64,7 @@ impl<'a> DexEntryStream<'a> {
         dex: &'a [DexFile],
         jobs: &'a [DexJob],
         _workers: usize,
-        level: i64,
+        level: u32,
     ) -> Result<Self> {
         // SAFETY: the browser reports the bounded pool it initialized for this run.
         let count = unsafe { workers() } as usize;
@@ -76,6 +78,7 @@ impl<'a> DexEntryStream<'a> {
             scheduled: 0,
             next: 0,
             level,
+            buffer: vec![0; COPY_BUFFER],
         };
         for _ in 0..count.min(jobs.len()) {
             stream.schedule()?;
@@ -89,26 +92,37 @@ impl<'a> DexEntryStream<'a> {
         };
         let (spooled, layouts) = serialize_dex(self.dex, &job.members)
             .map_err(|error| error.in_entry(job.name.as_str()))?;
-        let input = spooled.into_file();
-        let output = reseam_storage::temporary_file()?;
-        let name = job.name.as_str();
-        // SAFETY: the host copies name synchronously. The pending job owns both
-        // descriptors until finish acknowledges that the worker stopped using them.
-        let ticket = unsafe {
-            submit(
-                input.as_raw_fd(),
-                output.as_raw_fd(),
-                name.as_ptr(),
-                name.len(),
-                self.level,
-            )
+        let pending = match job.compression {
+            Compression::Stored => Pending {
+                ticket: None,
+                _input: None,
+                entry: Some(stored_entry(spooled, &mut self.buffer)?),
+                layouts,
+            },
+            Compression::Deflated => {
+                let input = spooled.into_file();
+                let output = reseam_storage::temporary_file()?;
+                let name = job.name.as_str();
+                // SAFETY: the host copies name synchronously. The pending job owns both
+                // descriptors until finish acknowledges that the worker stopped using them.
+                let ticket = unsafe {
+                    submit(
+                        input.as_raw_fd(),
+                        output.as_raw_fd(),
+                        name.as_ptr(),
+                        name.len(),
+                        i64::from(self.level),
+                    )
+                };
+                Pending {
+                    ticket: Some(ticket),
+                    _input: Some(input),
+                    entry: Some(DexEntry::Deflated(output)),
+                    layouts,
+                }
+            }
         };
-        self.pending.push_back(Pending {
-            ticket: Some(ticket),
-            _input: input,
-            output: Some(output),
-            layouts,
-        });
+        self.pending.push_back(pending);
         self.scheduled += 1;
         Ok(())
     }
@@ -121,13 +135,13 @@ impl<'a> DexEntryStream<'a> {
         pending
             .finish()
             .map_err(|error| error.in_entry(self.jobs[self.next].name.as_str()))?;
-        let file = pending
-            .output
+        let entry = pending
+            .entry
             .take()
-            .expect("completed compression owns its output");
+            .expect("a completed job owns its entry");
         let layouts = std::mem::take(&mut pending.layouts);
         self.next += 1;
         self.schedule()?;
-        Ok(WrittenDex { file, layouts })
+        Ok(WrittenDex { entry, layouts })
     }
 }

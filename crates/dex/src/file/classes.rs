@@ -1,94 +1,50 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::collections::BTreeSet;
-use std::sync::OnceLock;
+mod by_type;
+mod lifecycle;
+mod records;
 
-use rayon::prelude::*;
+use std::sync::OnceLock;
 
 use super::DexBytes;
 use super::ids::{read_type_list, validate_type_list};
-use crate::error::{Result, index_out_of_bounds};
-use crate::read::class::read_class_def;
-use crate::types::access_flags::AccessFlags;
-use crate::types::class::{ClassDef, NO_INDEX};
-use crate::types::header::ParseOptions;
-use crate::types::{StringIdx, TypeIdx, TypeList};
-
-const RECORD_SIZE: usize = 32;
-
-/// The four id fields of a `class_def_item`, readable for any class without
-/// materializing it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ClassHeader {
-    pub class_type: TypeIdx,
-    pub access_flags: AccessFlags,
-    pub superclass: Option<TypeIdx>,
-    pub source_file: Option<StringIdx>,
-}
-
-impl ClassHeader {
-    pub fn of(class: &ClassDef) -> Self {
-        Self {
-            class_type: class.class_type,
-            access_flags: class.access_flags,
-            superclass: class.superclass,
-            source_file: class.source_file,
-        }
-    }
-}
-
-/// A `class_def_item` as stored in the file.
-#[derive(Debug, Clone, Copy)]
-pub struct RawClassDef {
-    pub class_type: u32,
-    pub access_flags: u32,
-    pub superclass: u32,
-    pub interfaces_off: u32,
-    pub source_file: u32,
-    pub annotations_off: u32,
-    pub class_data_off: u32,
-    pub static_values_off: u32,
-}
-
-impl RawClassDef {
-    fn read(buf: &[u8], off: usize) -> Self {
-        let word = |i: usize| {
-            let o = off + i * 4;
-            u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]])
-        };
-        Self {
-            class_type: word(0),
-            access_flags: word(1),
-            superclass: word(2),
-            interfaces_off: word(3),
-            source_file: word(4),
-            annotations_off: word(5),
-            class_data_off: word(6),
-            static_values_off: word(7),
-        }
-    }
-
-    pub fn header(&self) -> ClassHeader {
-        ClassHeader {
-            class_type: TypeIdx(self.class_type),
-            access_flags: AccessFlags::from_bits_retain(self.access_flags),
-            superclass: (self.superclass != NO_INDEX).then_some(TypeIdx(self.superclass)),
-            source_file: (self.source_file != NO_INDEX).then_some(StringIdx(self.source_file)),
-        }
-    }
-}
+use super::ref_index::ClassRefs;
+use crate::error::Result;
+use crate::types::class::ClassDef;
+use crate::types::{TypeIdx, TypeList};
+use by_type::TypeIndex;
+use records::RECORD_SIZE;
+pub use records::{ClassHeader, RawClassDef};
 
 #[derive(Debug, Clone)]
 enum ClassSlot {
     Raw(u32),
-    Resident(Box<ClassDef>),
+    Resident(Box<ResidentClass>),
 }
 
+/// A decoded class and, once a scan asks, the references of its methods.
 #[derive(Debug, Clone)]
-struct TypeIndex {
-    ordered: Vec<(TypeIdx, u32)>,
-    changed: BTreeSet<u32>,
+struct ResidentClass {
+    def: ClassDef,
+    refs: OnceLock<ClassRefs>,
+}
+
+impl ResidentClass {
+    /// Mutable access, which makes the cached references stale.
+    fn grant(&mut self) -> &mut ClassDef {
+        self.refs.take();
+        &mut self.def
+    }
+}
+
+impl ClassSlot {
+    fn resident(def: ClassDef) -> Self {
+        Self::Resident(Box::new(ResidentClass {
+            def,
+            refs: OnceLock::new(),
+        }))
+    }
 }
 
 /// The class table: every class starts as a 32-byte record in the file and
@@ -99,6 +55,8 @@ pub struct ClassTable {
     raw: Option<DexBytes>,
     off: usize,
     slots: Vec<ClassSlot>,
+    /// Indices of the resident slots, ascending.
+    resident: Vec<u32>,
     by_type: OnceLock<TypeIndex>,
 }
 
@@ -118,16 +76,15 @@ impl ClassTable {
             raw: Some(raw),
             off,
             slots: (0..count as u32).map(ClassSlot::Raw).collect(),
+            resident: Vec::new(),
             by_type: OnceLock::new(),
         })
     }
 
     pub fn from_defs(defs: Vec<ClassDef>) -> Self {
         Self {
-            slots: defs
-                .into_iter()
-                .map(|c| ClassSlot::Resident(Box::new(c)))
-                .collect(),
+            resident: (0..defs.len() as u32).collect(),
+            slots: defs.into_iter().map(ClassSlot::resident).collect(),
             ..Self::default()
         }
     }
@@ -143,7 +100,7 @@ impl ClassTable {
     pub fn header(&self, i: usize) -> ClassHeader {
         match &self.slots[i] {
             ClassSlot::Raw(r) => self.record(*r).header(),
-            ClassSlot::Resident(c) => ClassHeader::of(c),
+            ClassSlot::Resident(c) => ClassHeader::of(&c.def),
         }
     }
 
@@ -161,7 +118,7 @@ impl ClassTable {
                     read_type_list(self.raw_bytes(), off as usize)
                 }
             }
-            ClassSlot::Resident(c) => c.interfaces.clone(),
+            ClassSlot::Resident(c) => c.def.interfaces.clone(),
         }
     }
 
@@ -175,7 +132,19 @@ impl ClassTable {
 
     pub fn resident(&self, i: usize) -> Option<&ClassDef> {
         match self.slots.get(i)? {
-            ClassSlot::Resident(c) => Some(c),
+            ClassSlot::Resident(c) => Some(&c.def),
+            ClassSlot::Raw(_) => None,
+        }
+    }
+
+    /// The references of a resident class's methods, kept until the class is
+    /// next granted mutably.
+    pub(crate) fn resident_refs(&self, i: usize) -> Option<&ClassRefs> {
+        match self.slots.get(i)? {
+            ClassSlot::Resident(c) => {
+                let data = c.def.class_data.as_deref()?;
+                Some(c.refs.get_or_init(|| ClassRefs::of(data)))
+            }
             ClassSlot::Raw(_) => None,
         }
     }
@@ -188,8 +157,16 @@ impl ClassTable {
             index.changed.insert(i as u32);
         }
         match self.slots.get_mut(i)? {
-            ClassSlot::Resident(c) => Some(c),
+            ClassSlot::Resident(c) => Some(c.grant()),
             ClassSlot::Raw(_) => None,
+        }
+    }
+
+    pub(crate) fn release_refs(&mut self) {
+        for slot in &mut self.slots {
+            if let ClassSlot::Resident(c) = slot {
+                c.refs.take();
+            }
         }
     }
 
@@ -197,7 +174,7 @@ impl ClassTable {
     /// skipped; call [`Self::materialize_all`] first to see all of them.
     pub fn iter_resident(&self) -> impl Iterator<Item = &ClassDef> {
         self.slots.iter().filter_map(|s| match s {
-            ClassSlot::Resident(c) => Some(&**c),
+            ClassSlot::Resident(c) => Some(&c.def),
             ClassSlot::Raw(_) => None,
         })
     }
@@ -211,9 +188,13 @@ impl ClassTable {
                 }));
         }
         self.slots.iter_mut().filter_map(|s| match s {
-            ClassSlot::Resident(c) => Some(&mut **c),
+            ClassSlot::Resident(c) => Some(c.grant()),
             ClassSlot::Raw(_) => None,
         })
+    }
+
+    pub(crate) fn resident_indices(&self) -> &[u32] {
+        &self.resident
     }
 
     pub fn is_resident(&self, i: usize) -> bool {
@@ -221,123 +202,24 @@ impl ClassTable {
     }
 
     pub fn all_resident(&self) -> bool {
-        self.slots
-            .iter()
-            .all(|s| matches!(s, ClassSlot::Resident(_)))
+        self.resident.len() == self.slots.len()
     }
 
     pub fn resident_count(&self) -> usize {
-        self.slots
-            .iter()
-            .filter(|s| matches!(s, ClassSlot::Resident(_)))
-            .count()
-    }
-
-    /// Decodes the class from the file if needed and returns it mutably.
-    pub fn materialize(&mut self, i: usize, opts: ParseOptions) -> Result<&mut ClassDef> {
-        let len = self.len();
-        let Some(slot) = self.slots.get_mut(i) else {
-            return Err(index_out_of_bounds("class", i as u32, len as u32));
-        };
-        if let ClassSlot::Raw(r) = *slot {
-            let buf = self.raw_bytes();
-            let def = read_class_def(
-                self.raw.as_ref().expect("raw slot retains its source"),
-                RawClassDef::read(buf, self.off + r as usize * RECORD_SIZE),
-                opts,
-            )?;
-            self.slots[i] = ClassSlot::Resident(Box::new(def));
-        }
-        Ok(self
-            .resident_mut(i)
-            .expect("materialization installs a resident class"))
-    }
-
-    pub fn materialize_all(&mut self, opts: ParseOptions) -> Result<()> {
-        let Some(raw) = self.raw.clone() else {
-            return Ok(());
-        };
-        let buf = raw.as_bytes();
-        let off = self.off;
-        self.slots.par_iter_mut().try_for_each(|slot| {
-            if let ClassSlot::Raw(r) = *slot {
-                let def = read_class_def(
-                    &raw,
-                    RawClassDef::read(buf, off + r as usize * RECORD_SIZE),
-                    opts,
-                )?;
-                *slot = ClassSlot::Resident(Box::new(def));
-            }
-            Ok(())
-        })
-    }
-
-    pub fn push(&mut self, class: ClassDef) -> usize {
-        self.slots.push(ClassSlot::Resident(Box::new(class)));
-        self.by_type.take();
-        self.slots.len() - 1
-    }
-
-    pub fn remove(&mut self, i: usize, opts: ParseOptions) -> Result<ClassDef> {
-        self.materialize(i, opts)?;
-        self.by_type.take();
-        match self.slots.remove(i) {
-            ClassSlot::Resident(c) => Ok(*c),
-            ClassSlot::Raw(_) => {
-                unreachable!("materialization has replaced the raw slot with a resident class")
-            }
-        }
-    }
-
-    pub fn into_defs(mut self, opts: ParseOptions) -> Result<Vec<ClassDef>> {
-        self.materialize_all(opts)?;
-        Ok(self
-            .slots
-            .into_iter()
-            .map(|slot| match slot {
-                ClassSlot::Resident(c) => *c,
-                ClassSlot::Raw(_) => {
-                    unreachable!("materialization has replaced the raw slot with a resident class")
-                }
-            })
-            .collect())
-    }
-
-    pub fn index_of_type(&self, type_idx: TypeIdx) -> Option<usize> {
-        let index = self.by_type.get_or_init(|| {
-            let mut ordered: Vec<_> = self
-                .headers()
-                .enumerate()
-                .map(|(i, header)| (header.class_type, i as u32))
-                .collect();
-            ordered.sort_unstable_by_key(|&(type_, _)| type_);
-            TypeIndex {
-                ordered,
-                changed: BTreeSet::new(),
-            }
-        });
-        // A granted mutable class can change its type after the snapshot was built.
-        // Search those slots directly; all other snapshot keys remain valid.
-        if let Some(&slot) = index
-            .changed
-            .iter()
-            .find(|&&slot| self.header(slot as usize).class_type == type_idx)
-        {
-            return Some(slot as usize);
-        }
-        let first = index
-            .ordered
-            .partition_point(|&(type_, _)| type_ < type_idx);
-        index.ordered[first..]
-            .iter()
-            .take_while(|&&(type_, _)| type_ == type_idx)
-            .find(|&&(_, slot)| !index.changed.contains(&slot))
-            .map(|&(_, slot)| slot as usize)
+        self.resident.len()
     }
 
     pub fn heap_bytes(&self) -> u64 {
         (self.slots.len() * size_of::<ClassSlot>()
-            + self.resident_count() * size_of::<ClassDef>()
+            + self.resident.len() * (size_of::<ClassDef>() + size_of::<u32>())
+            + self
+                .slots
+                .iter()
+                .filter_map(|s| match s {
+                    ClassSlot::Resident(c) => c.refs.get().map(ClassRefs::heap_bytes),
+                    ClassSlot::Raw(_) => None,
+                })
+                .sum::<usize>()
             + self.by_type.get().map_or(0, |index| {
                 index.ordered.len() * size_of::<(TypeIdx, u32)>()
                     + index.changed.len() * size_of::<u32>()

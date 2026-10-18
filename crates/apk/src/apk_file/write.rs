@@ -1,23 +1,25 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::collections::{HashMap, HashSet};
+mod jobs;
+mod layout;
+
+use std::collections::HashSet;
 use std::fs::File;
-use std::io::{self, BufWriter};
+use std::io;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use reseam_dex::{DexPart, WriteLayout};
 use tracing::{debug, info, instrument};
 
 use super::baseline_profile::ProfileRewrite;
 use super::component::EntryEdit;
-use super::dex_workers::DexEntryStream;
-use super::{ApkComponent, ApkFile, ComponentIndex, DexIndex, DexSource};
-use crate::art_profile;
-use crate::entry::{EntryName, is_signature_entry, next_free_dex_name};
+use super::dex_workers::{DexEntry, DexEntryStream};
+use super::{ApkFile, ComponentIndex};
 use crate::error::{Result, invalid};
-use crate::zip::{reader, writer};
+use crate::zip::writer::{Encoding, Writer};
+pub(super) use jobs::{DexJob, DexMember};
+use layout::{EntrySource, PlannedEntry, plan};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ApkWriteOptions {
@@ -31,7 +33,7 @@ pub struct ApkWriteOptions {
     pub dex_workers: NonZeroUsize,
     /// Deflate level for rewritten DEX entries. Level 3 compresses within two
     /// percent of level 6 in a quarter less time.
-    pub dex_compression_level: i64,
+    pub dex_compression_level: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -52,35 +54,6 @@ impl Default for ApkWriteOptions {
             dex_compression_level: 3,
         }
     }
-}
-
-pub(super) struct DexMember {
-    pub dex_index: DexIndex,
-    pub part: Option<DexPart>,
-}
-
-pub(super) struct DexJob {
-    pub members: Vec<DexMember>,
-    pub component: ComponentIndex,
-    pub name: EntryName,
-}
-
-/// A compressed single-entry ZIP holding a written DEX, with where each of
-/// its members' pools and classes landed.
-pub(super) struct WrittenDex {
-    pub file: File,
-    pub layouts: Vec<WriteLayout>,
-}
-
-enum EntrySource<'a> {
-    Archive(usize),
-    Edit(&'a EntryEdit),
-    Dex(usize),
-}
-
-struct PlannedEntry<'a> {
-    name: EntryName,
-    source: EntrySource<'a>,
 }
 
 impl ApkFile {
@@ -113,13 +86,17 @@ impl ApkFile {
                 }
             }
         }
-        let mut staging = Vec::with_capacity(paths.len());
-        self.write_components(options, |_| {
-            let file = tempfile::NamedTempFile::new_in(output_dir)?;
-            let output = file.reopen()?;
-            staging.push(file);
-            Ok(output)
-        })?;
+        let staging = paths
+            .iter()
+            .map(|_| tempfile::NamedTempFile::new_in(output_dir))
+            .collect::<io::Result<Vec<_>>>()?;
+        self.write_components(
+            options,
+            staging
+                .iter()
+                .map(tempfile::NamedTempFile::reopen)
+                .collect::<io::Result<_>>()?,
+        )?;
         for (file, path) in staging.into_iter().zip(&paths) {
             file.persist(path).map_err(|error| error.error)?;
         }
@@ -135,7 +112,13 @@ impl ApkFile {
         dir: &Path,
     ) -> Result<Vec<(String, File)>> {
         let names = self.output_names()?;
-        let files = self.write_components(options, |_| tempfile::tempfile_in(dir))?;
+        let files = self.write_components(
+            options,
+            names
+                .iter()
+                .map(|_| tempfile::tempfile_in(dir))
+                .collect::<io::Result<_>>()?,
+        )?;
         Ok(names.into_iter().zip(files).collect())
     }
 
@@ -165,11 +148,9 @@ impl ApkFile {
             .collect()
     }
 
-    fn write_components(
-        &self,
-        options: ApkWriteOptions,
-        mut open: impl FnMut(usize) -> io::Result<File>,
-    ) -> Result<Vec<File>> {
+    /// Writes each component into its output, in component order. Components
+    /// without rewritten DEX go first, so their copying overlaps serialization.
+    fn write_components(&self, options: ApkWriteOptions, outputs: Vec<File>) -> Result<Vec<File>> {
         let mut jobs = self.dex_jobs()?;
         jobs.sort_by_key(|job| {
             (
@@ -191,13 +172,15 @@ impl ApkFile {
             .map(|(index, (component, profile))| {
                 plan(
                     component,
-                    index,
+                    ComponentIndex(index),
                     &jobs,
                     options.signatures,
                     profile.is_some(),
                 )
             })
             .collect();
+        let mut order: Vec<_> = (0..self.components.len()).map(ComponentIndex).collect();
+        order.sort_by_key(|&index| jobs.iter().any(|job| job.component == index));
         info!(
             dex_entry_count = self.dex.len(),
             dex_rewrite_count = jobs.len(),
@@ -212,104 +195,23 @@ impl ApkFile {
                 options.dex_workers.get(),
                 options.dex_compression_level,
             )?;
-            plans
-                .iter()
-                .zip(profiles)
-                .enumerate()
-                .map(|(index, (plan, profile))| {
-                    self.write_component(
-                        ComponentIndex(index),
-                        plan,
-                        &jobs,
-                        profile,
-                        &mut entries,
-                        open(index)?,
-                    )
-                })
-                .collect()
+            let mut profiles = profiles;
+            let mut files: Vec<_> = outputs.into_iter().map(Some).collect();
+            for index in order {
+                let output = files[index.0]
+                    .take()
+                    .expect("each component is written once");
+                files[index.0] = Some(self.write_component(
+                    index,
+                    &plans[index.0],
+                    &jobs,
+                    profiles[index.0].take(),
+                    &mut entries,
+                    output,
+                )?);
+            }
+            Ok(files.into_iter().flatten().collect())
         })
-    }
-
-    fn dex_jobs(&self) -> Result<Vec<DexJob>> {
-        let rewritten: HashSet<_> = self
-            .dex
-            .iter()
-            .zip(&self.dex_origins)
-            .filter(|(dex, origin)| {
-                origin.kind != DexSource::Removed
-                    && (dex.is_dirty() || origin.kind == DexSource::Added)
-            })
-            .map(|(_, origin)| (origin.component, &origin.name))
-            .collect();
-        let mut used: Vec<HashSet<EntryName>> = self
-            .components
-            .iter()
-            .map(|component| {
-                component
-                    .reserved_names()
-                    .filter(|name| !matches!(component.edits().get(*name), Some(EntryEdit::Dex)))
-                    .map(EntryName::from)
-                    .collect()
-            })
-            .collect();
-        let mut jobs = Vec::new();
-        let mut emitted = HashSet::new();
-        for (dex_index, (dex, origin)) in self.dex.iter().zip(&self.dex_origins).enumerate() {
-            if origin.kind == DexSource::Removed
-                || !self.components[origin.component.0].contains(origin.name.as_str())
-                || !rewritten.contains(&(origin.component, &origin.name))
-            {
-                continue;
-            }
-            let component = origin.component;
-            if !emitted.insert((component, &origin.name)) {
-                continue;
-            }
-            let name = if origin.kind == DexSource::Added {
-                next_free_dex_name(&mut used[component.0])
-            } else {
-                origin.name.clone()
-            };
-            if dex.header().version.is_container_format() {
-                let members = self
-                    .dex
-                    .iter()
-                    .zip(&self.dex_origins)
-                    .enumerate()
-                    .filter(|(_, (_, member))| {
-                        member.kind != DexSource::Removed
-                            && member.component == component
-                            && member.name == origin.name
-                    })
-                    .map(|(index, (dex, _))| members_for(DexIndex(index), dex))
-                    .collect::<Result<Vec<_>>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                jobs.push(DexJob {
-                    members,
-                    component,
-                    name,
-                });
-                continue;
-            }
-            for (ordinal, member) in members_for(DexIndex(dex_index), dex)?
-                .into_iter()
-                .enumerate()
-            {
-                let name = if ordinal == 0 {
-                    name.clone()
-                } else {
-                    next_free_dex_name(&mut used[component.0])
-                };
-                jobs.push(DexJob {
-                    members: vec![member],
-                    component,
-                    name,
-                });
-            }
-        }
-        Ok(jobs)
     }
 
     fn write_component(
@@ -324,33 +226,38 @@ impl ApkFile {
         let component = &self.components[index.0];
         debug!(component = component.name(), "writing APK component");
         let mut source = component.archive().clone();
-        let mut writer = writer::Writer::new(BufWriter::with_capacity(1 << 20, output));
+        let source_file = File::open(component.path())?;
+        let mut writer = Writer::new(output);
         for entry in plan {
             let result = match entry.source {
                 EntrySource::Archive(index) => {
-                    writer::copy_original(&mut writer, &mut source, index)
+                    writer.copy_original(&mut source, &source_file, index)
                 }
                 EntrySource::Dex(job) => entries.next().and_then(|written| {
-                    let checksum = writer::copy_compressed(&mut writer, written.file)?;
+                    let checksum = match written.entry {
+                        DexEntry::Deflated(file) => writer.copy_compressed(&file)?,
+                        DexEntry::Stored { file, crc } => {
+                            writer.write_stored(entry.name.as_str(), &file, crc)?;
+                            crc
+                        }
+                    };
                     if let Some(profile) = &mut profile {
                         profile.record(self, index, &jobs[job], &written.layouts, checksum);
                     }
                     Ok(())
                 }),
                 EntrySource::Edit(EntryEdit::Staged { file, compression }) => {
-                    writer::write_file(&mut writer, entry.name.as_str(), file, compression.method())
+                    writer.write_file(entry.name.as_str(), file, compression.encoding())
                 }
-                EntrySource::Edit(EntryEdit::Manifest) => writer::write_bytes(
-                    &mut writer,
+                EntrySource::Edit(EntryEdit::Manifest) => writer.write_bytes(
                     entry.name.as_str(),
                     &component.manifest().serialize()?,
-                    zip::CompressionMethod::Deflated,
+                    Encoding::DEFLATED,
                 ),
-                EntrySource::Edit(EntryEdit::Resources) => writer::write_file(
-                    &mut writer,
+                EntrySource::Edit(EntryEdit::Resources) => writer.write_file(
                     entry.name.as_str(),
                     &component.resources_file()?,
-                    zip::CompressionMethod::Stored,
+                    Encoding::Stored,
                 ),
                 EntrySource::Edit(EntryEdit::Deleted | EntryEdit::Dex) => {
                     Err(invalid("apk write", "entry has no planned source"))
@@ -360,94 +267,11 @@ impl ApkFile {
         }
         if let Some(profile) = profile {
             for (name, bytes) in profile.finish().to_entries()? {
-                writer::write_bytes(&mut writer, name, &bytes, zip::CompressionMethod::Stored)
+                writer
+                    .write_bytes(name, &bytes, Encoding::Stored)
                     .map_err(|error| error.in_entry(name))?;
             }
         }
-        Ok(writer
-            .finish()?
-            .into_inner()
-            .map_err(io::IntoInnerError::into_error)?)
+        writer.finish()
     }
-}
-
-fn members_for(index: DexIndex, dex: &reseam_dex::DexFile) -> Result<Vec<DexMember>> {
-    Ok(match reseam_dex::split_to_fit(dex)? {
-        None => vec![DexMember {
-            dex_index: index,
-            part: None,
-        }],
-        Some(parts) => parts
-            .into_iter()
-            .map(|part| DexMember {
-                dex_index: index,
-                part: Some(part),
-            })
-            .collect(),
-    })
-}
-
-/// Rewritten baseline profiles are written last, once every DEX entry and
-/// its checksum is known.
-fn plan<'a>(
-    component: &'a ApkComponent,
-    index: usize,
-    jobs: &[DexJob],
-    signatures: SignaturePolicy,
-    rewrites_profile: bool,
-) -> Vec<PlannedEntry<'a>> {
-    let dex_jobs: HashMap<_, _> = jobs
-        .iter()
-        .enumerate()
-        .filter(|(_, job)| job.component == ComponentIndex(index))
-        .map(|(job_index, job)| (&job.name, job_index))
-        .collect();
-    let names = component
-        .archive()
-        .file_names()
-        .map(EntryName::from)
-        .chain(
-            component
-                .edits()
-                .iter()
-                .filter(|(name, edit)| {
-                    !matches!(edit, EntryEdit::Dex | EntryEdit::Deleted)
-                        && !dex_jobs.contains_key(name)
-                        && !reader::contains(component.archive(), name.as_str())
-                })
-                .map(|(name, _)| name.clone()),
-        )
-        .chain(
-            jobs.iter()
-                .filter(|job| {
-                    job.component == ComponentIndex(index)
-                        && !reader::contains(component.archive(), job.name.as_str())
-                })
-                .map(|job| job.name.clone()),
-        );
-    names
-        .filter_map(|name| {
-            if matches!(
-                component.edits().get(name.as_str()),
-                Some(EntryEdit::Deleted)
-            ) || (signatures == SignaturePolicy::Strip && is_signature_entry(name.as_str()))
-                || (rewrites_profile && art_profile::ENTRIES.contains(&name.as_str()))
-            {
-                return None;
-            }
-            let source = if let Some(&job) = dex_jobs.get(&name) {
-                EntrySource::Dex(job)
-            } else if let Some(edit) = component.edits().get(name.as_str()) {
-                EntrySource::Edit(edit)
-            } else {
-                EntrySource::Archive(
-                    component
-                        .archive()
-                        .index_for_name(name.as_str())
-                        .expect("name came from the archive"),
-                )
-            };
-            Some(PlannedEntry { name, source })
-        })
-        .collect()
 }

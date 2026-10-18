@@ -203,7 +203,7 @@ impl PatchContext<'_> {
             let Some(class) = class_of(descriptor) else {
                 continue;
             };
-            if self.find_class(class).is_some() || is_platform(class) {
+            if is_platform(class) || self.find_class(class).is_some() {
                 continue;
             }
             match self.extensions.provider(class) {

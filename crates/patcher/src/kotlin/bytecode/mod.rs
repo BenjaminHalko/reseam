@@ -9,6 +9,7 @@ mod lookup;
 mod methods;
 mod mutation;
 mod pools;
+mod positions;
 mod registers;
 mod replace_operands;
 mod search;
@@ -18,5 +19,4 @@ fn logged<T>(what: &str, result: Result<T, impl std::fmt::Display>) -> Result<T,
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
 mod tests;

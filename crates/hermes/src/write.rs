@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use sha1::Digest;
 use std::io::Write;
 
 use crate::Result;
@@ -128,7 +129,7 @@ impl Editor<'_> {
         put(Field::StringSwitchCount, self.edits.string_switches);
         let mut sink = Sink {
             output,
-            hash: ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY),
+            hash: sha1::Sha1::new(),
             position: 0,
         };
         sink.bytes(&header)?;
@@ -168,8 +169,8 @@ impl Editor<'_> {
         }
         sink.align()?;
         sink.bytes(&self.file.source[old_debug..old_footer])?;
-        let digest = sink.hash.finish();
-        output.write_all(digest.as_ref())?;
+        let digest = sink.hash.finalize();
+        output.write_all(&digest)?;
         output.write_all(&self.file.source[file_length..])?;
         Ok(())
     }
@@ -206,7 +207,7 @@ fn relocate(offset: usize, shift: usize) -> Result<u32> {
 
 struct Sink<'a, W> {
     output: &'a mut W,
-    hash: ring::digest::Context,
+    hash: sha1::Sha1,
     position: usize,
 }
 

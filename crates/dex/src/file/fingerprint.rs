@@ -36,8 +36,8 @@ struct PreparedFingerprint<'a> {
 
 impl PreparedFingerprint<'_> {
     fn query(&self, fp: &Fingerprint) -> RefQuery {
-        let strings = self.strings.iter().flatten().map(|&s| RefKey::string(s));
-        let literals = fp.literals.iter().flatten().map(|&l| RefKey::literal(l));
+        let strings = self.strings.iter().flatten().map(|&s| RefKey::String(s));
+        let literals = fp.literals.iter().flatten().map(|&l| RefKey::Literal(l));
         RefQuery::all_of(strings.chain(literals))
     }
 }

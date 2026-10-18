@@ -38,8 +38,11 @@ impl DexFile {
     }
 
     pub fn find_type_idx(&self, descriptor: &str) -> Option<TypeIdx> {
-        let string_idx = self.find_string_idx(descriptor)?;
-        self.types.find(&string_idx).map(|i| TypeIdx(i as u32))
+        self.type_lookups
+            .get_or_find(descriptor, self.types.len(), || {
+                let string_idx = self.find_string_idx(descriptor)?;
+                self.types.find(&string_idx).map(|i| TypeIdx(i as u32))
+            })
     }
 
     pub(crate) fn find_proto_idx(&self, ret: TypeIdx, params: &[TypeIdx]) -> Option<ProtoIdx> {

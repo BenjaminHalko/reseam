@@ -130,7 +130,7 @@ impl ApkFile {
     /// files, so their output names can differ from their session entry names.
     pub fn add_dex(&mut self, dex: DexFile) {
         let mut used = self.components[0]
-            .reserved_names()
+            .reserved_dex_names()
             .map(EntryName::from)
             .collect();
         let name = crate::entry::next_free_dex_name(&mut used);

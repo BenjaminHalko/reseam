@@ -12,7 +12,9 @@ import app.reseam.patch.dex.parameterTypes
 
 internal class Ranker<S>(val label: String, val block: S.() -> Int)
 
-internal class Scored<T>(val value: T, val score: Int, val reasons: List<String>)
+internal class Scored<T>(val value: T, val ranks: List<Pair<String, Int>>) {
+    val score: Int = ranks.sumOf { it.second }
+}
 
 internal class Rejected<T>(val value: T, val failure: String)
 
@@ -35,13 +37,14 @@ internal class Evaluated<T>(
     val exhaustedBy: String?,
     val rejected: List<String>,
     val describe: (T) -> String,
+    private val reasons: (Scored<T>) -> List<String>,
 ) {
     fun report(debugName: String?, winner: Scored<T>): MatchReport =
         SearchMatchReport(
             debugName ?: "anonymous",
             describe(winner.value),
             considered,
-            winner.reasons,
+            reasons(winner),
             accepted
                 .filter { it !== winner }
                 .take(3)

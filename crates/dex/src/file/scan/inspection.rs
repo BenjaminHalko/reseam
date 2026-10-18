@@ -1,11 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use super::{
-    AccessFlags, ClassData, ClassDataCursor, ClassSkeleton, DexFile, EncodedField, EncodedMethod,
-    Fingerprint, InstructionPattern, MemberCounts, MethodHeader, MethodHit, MethodIdx, RefQuery,
-    Result, count_instructions, decode_one_method, read_class_skeleton_at, read_u16, read_u32,
+use super::class::decode_one_method;
+use super::view::MethodHit;
+use crate::error::Result;
+use crate::file::{DexFile, Fingerprint, InstructionPattern, RefQuery};
+use crate::read::class::{
+    ClassDataCursor, ClassSkeleton, MemberCounts, MethodHeader, read_class_skeleton_at,
 };
+use crate::read::code::count_instructions;
+use crate::read::{read_u16, read_u32};
+use crate::types::MethodIdx;
+use crate::types::access_flags::AccessFlags;
+use crate::types::class::{ClassData, EncodedField, EncodedMethod};
 
 /// A method's identity and frame shape, read without decoding its code.
 #[derive(Debug, Clone, Copy)]

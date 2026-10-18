@@ -8,7 +8,7 @@ description = "Borrowed Hermes bytecode parsing, linking, and editing"
 [dependencies]
 reseam-storage.workspace = true
 thiserror.workspace = true
-ring.workspace = true
+sha1.workspace = true
 rustc-hash.workspace = true
 rayon.workspace = true
 
