@@ -47,7 +47,7 @@ reseam bundle pack build/reseam/stage --key ~/.reseam/bundle-signing.key --out m
 
 Packs and signs a staging folder into a `.reseam` file. The Gradle build creates the staging folder and calls this for you. The folder holds `manifest.toml`, the patch `.jar` and extension `.dex` files, and an optional `resources/` folder.
 
-`--version <version>` records the release in the signed manifest, where [`reseam publish patches`](/docs/cli/publish/) and the app's settings screen read it. Leave it out for development builds.
+`--version <version>` records the release in the signed manifest, where [`reseam release patches`](/docs/cli/release/) and the app's settings screen read it. Leave it out for development builds.
 
 Packing loads the patches once to record their metadata, so it needs Java.
 

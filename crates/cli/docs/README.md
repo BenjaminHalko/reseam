@@ -7,5 +7,5 @@ Published at [reseam.app/docs/cli](https://reseam.app/docs/cli/overview/).
 - [`reseam patch`](2_0_patch.md)
 - [`reseam perf`](2_5_perf.md)
 - [`reseam bundle`](3_0_bundle.md)
-- [`reseam publish`](4_0_publish.md)
+- [`reseam release`](4_0_release.md)
 - [`reseam info`](5_0_info.md)

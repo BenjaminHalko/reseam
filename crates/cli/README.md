@@ -17,7 +17,7 @@ The CLI trusts no bundle signer on its own. Pass `--trust` with the public key o
 | `reseam patch` | Applies patches from bundles to an APK, APKM, XAPK, or split set, and signs the result. |
 | `reseam perf` | Patches several times and reports time and memory per step. |
 | `reseam bundle` | Creates signing keys, packs bundles, checks a staging manifest, and lists a bundle's patches. |
-| `reseam publish` | Adds a release to a `patches.json` or `manager.json` index. |
+| `reseam release` | Publishes a release to a GitHub or Forgejo release, an S3 bucket, or a folder. |
 | `reseam info` | Prints an app's package, version, and DEX, class, and method counts. |
 
 Install steps and every flag are in the [CLI docs](https://reseam.app/docs/cli/overview/) (source: [`docs/`](docs/)). Run any command with `--help` for a short summary.

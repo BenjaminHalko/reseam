@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use clap::{Args, Parser, Subcommand};
 use reseam_patcher::PatchPreset;
+use url::Url;
 
 #[derive(Parser)]
 #[command(name = "reseam", version, about = "APK patching engine")]
@@ -24,9 +27,10 @@ pub enum Commands {
         #[command(subcommand)]
         command: BundleCommands,
     },
-    Publish {
+    /// Publishes a release to a GitHub or Forgejo release, an S3 bucket or a folder.
+    Release {
         #[command(subcommand)]
-        command: PublishCommands,
+        command: ReleaseCommands,
     },
 }
 
@@ -148,50 +152,97 @@ pub struct BundleListCommand {
 }
 
 #[derive(Subcommand)]
-pub enum PublishCommands {
-    Patches(PublishPatchesCommand),
-    Manager(PublishManagerCommand),
+pub enum ReleaseCommands {
+    /// A signed bundle, added to the published patches.json.
+    Patches(ReleasePatchesCommand),
+    /// The Reseam Manager builds in a folder, added to the published manager.json.
+    Manager(ReleaseManagerCommand),
+    /// The files in a folder.
+    Files(ReleaseFilesCommand),
 }
 
 #[derive(Args)]
 pub struct ReleaseArgs {
+    /// The tag the release is for.
     #[arg(long)]
-    pub url: String,
-    #[arg(long, conflicts_with = "description_file")]
-    pub description: Option<String>,
+    pub tag: String,
+    /// `forge` for the release of the GitHub or Forgejo workflow running this, `s3://<bucket>/<prefix>`,
+    /// or a folder.
+    #[arg(long, default_value = "forge")]
+    pub to: Target,
+    /// The URL an s3 or folder target is served from, for the links in the index.
     #[arg(long)]
-    pub description_file: Option<PathBuf>,
+    pub public_url: Option<Url>,
+    /// Also publish a GitHub or Forgejo release with the notes, for s3 and folder targets.
     #[arg(long)]
-    pub homepage: Option<String>,
+    pub forge_release: bool,
+    /// The release notes; the subjects of the commits since the previous tag by default.
     #[arg(long)]
-    pub created_at: Option<String>,
+    pub notes: Option<PathBuf>,
+    /// Keep only the newest releases in an s3 or folder target.
     #[arg(long)]
-    pub prerelease: bool,
+    pub keep: Option<NonZeroUsize>,
+}
+
+#[derive(Clone)]
+pub enum Target {
+    Forge,
+    S3 { bucket: String, prefix: String },
+    Directory(PathBuf),
+}
+
+impl FromStr for Target {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == "forge" {
+            return Ok(Self::Forge);
+        }
+        let Some(location) = value.strip_prefix("s3://") else {
+            return Ok(Self::Directory(PathBuf::from(value)));
+        };
+        let (bucket, prefix) = location.split_once('/').unwrap_or((location, ""));
+        if bucket.is_empty() {
+            return Err("an s3 target names a bucket: s3://<bucket>/<prefix>".into());
+        }
+        Ok(Self::S3 {
+            bucket: bucket.to_owned(),
+            prefix: prefix.trim_matches('/').to_owned(),
+        })
+    }
 }
 
 #[derive(Args)]
-pub struct PublishPatchesCommand {
+pub struct ReleasePatchesCommand {
     pub bundle: PathBuf,
     #[command(flatten)]
     pub release: ReleaseArgs,
-    #[arg(long, default_value = "patches.json")]
-    pub out: PathBuf,
+    /// The publisher's page; kept from the published index, or the repository page by default.
+    #[arg(long)]
+    pub homepage: Option<String>,
 }
 
 #[derive(Args)]
-pub struct PublishManagerCommand {
+pub struct ReleaseManagerCommand {
+    pub dir: PathBuf,
+    #[command(flatten)]
+    pub release: ReleaseArgs,
     #[arg(long)]
     pub name: String,
     #[arg(long)]
     pub author: String,
     #[arg(long, default_value = "")]
     pub summary: String,
+    /// Where users download this release.
     #[arg(long)]
-    pub version: String,
+    pub download_url: Url,
+}
+
+#[derive(Args)]
+pub struct ReleaseFilesCommand {
+    pub dir: PathBuf,
     #[command(flatten)]
     pub release: ReleaseArgs,
-    #[arg(long, default_value = "manager.json")]
-    pub out: PathBuf,
 }
 
 #[cfg(test)]

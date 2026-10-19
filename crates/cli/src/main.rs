@@ -14,10 +14,10 @@ mod logging;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::app::{BundleCommands, Cli, Commands, PublishCommands};
+use crate::app::{BundleCommands, Cli, Commands, ReleaseCommands};
 use crate::commands::{
     run_bundle_keygen, run_bundle_list, run_bundle_pack, run_info, run_patch, run_perf,
-    run_perf_worker, run_publish_manager, run_publish_patches,
+    run_perf_worker, run_release_files, run_release_manager, run_release_patches,
 };
 use crate::logging::init_logging;
 
@@ -42,9 +42,10 @@ fn main() -> Result<()> {
             }
             BundleCommands::List(command) => run_bundle_list(&command),
         },
-        Commands::Publish { command } => match command {
-            PublishCommands::Patches(command) => run_publish_patches(&command),
-            PublishCommands::Manager(command) => run_publish_manager(&command),
+        Commands::Release { command } => match command {
+            ReleaseCommands::Patches(command) => run_release_patches(&command),
+            ReleaseCommands::Manager(command) => run_release_manager(&command),
+            ReleaseCommands::Files(command) => run_release_files(&command),
         },
     }
 }

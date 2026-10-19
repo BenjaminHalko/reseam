@@ -104,6 +104,10 @@ libloading  = "0.9"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 tracing     = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+ureq        = { version = "3", default-features = false, features = ["rustls", "json"] }
+rusty-s3    = "0.10"
+url         = "2"
+semver      = "1"
 
 # Shared dev dependencies
 pretty_assertions = "1"

@@ -15,7 +15,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 toml_edit = "0.25"
-semver = "1"
+semver = { workspace = true }
 boltffi_backend = { workspace = true }
 boltffi_bindgen = { workspace = true }
 boltffi_binding = { workspace = true }

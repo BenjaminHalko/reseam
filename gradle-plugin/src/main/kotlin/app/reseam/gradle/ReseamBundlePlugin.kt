@@ -85,38 +85,35 @@ internal class ReseamBundlePlugin : Plugin<Project> {
                 duplicatesStrategy = DuplicatesStrategy.FAIL
             }
 
-        val bundle =
-            project.tasks.register("bundle", Exec::class.java) {
-                group = "build"
-                description = "Packs the staged bundle into a signed .reseam file."
-                dependsOn(stage)
-                val signingKey =
-                    project.providers
-                        .environmentVariable("RESEAM_BUNDLE_KEY")
-                        .orElse(project.providers.gradleProperty("reseam.signingKey"))
-                        .orElse("${System.getProperty("user.home")}/.reseam/bundle-signing.key")
-                inputs.dir(stageDir)
-                inputs.file(reseamBin)
-                inputs.file(signingKey.map(project::file))
-                inputs.property("version", version.orElse(""))
-                outputs.file(bundleFile)
-                doFirst {
-                    bundleFile.get().asFile.parentFile.mkdirs()
-                    commandLine(
-                        listOf(
-                            reseamBin.get().absolutePath,
-                            "bundle",
-                            "pack",
-                            stageDir.get().asFile.absolutePath,
-                            "--key",
-                            signingKey.get(),
-                            "--out",
-                            bundleFile.get().asFile.absolutePath,
-                        ) + version.map { listOf("--version", it) }.getOrElse(emptyList())
-                    )
-                }
+        project.tasks.register("bundle", Exec::class.java) {
+            group = "build"
+            description = "Packs the staged bundle into a signed .reseam file."
+            dependsOn(stage)
+            val signingKey =
+                project.providers
+                    .environmentVariable("RESEAM_BUNDLE_KEY")
+                    .orElse(project.providers.gradleProperty("reseam.signingKey"))
+                    .orElse("${System.getProperty("user.home")}/.reseam/bundle-signing.key")
+            inputs.dir(stageDir)
+            inputs.file(reseamBin)
+            inputs.file(signingKey.map(project::file))
+            inputs.property("version", version.orElse(""))
+            outputs.file(bundleFile)
+            doFirst {
+                bundleFile.get().asFile.parentFile.mkdirs()
+                commandLine(
+                    listOf(
+                        reseamBin.get().absolutePath,
+                        "bundle",
+                        "pack",
+                        stageDir.get().asFile.absolutePath,
+                        "--key",
+                        signingKey.get(),
+                        "--out",
+                        bundleFile.get().asFile.absolutePath,
+                    ) + version.map { listOf("--version", it) }.getOrElse(emptyList())
+                )
             }
-
-        project.registerRelease(bundle, bundleFile, bundleName, version, reseamBin)
+        }
     }
 }

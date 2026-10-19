@@ -5,7 +5,7 @@ mod bundle;
 mod info;
 mod patch;
 mod perf;
-mod publish;
+mod release;
 
 use std::path::Path;
 
@@ -18,7 +18,7 @@ pub use bundle::{run_bundle_keygen, run_bundle_list, run_bundle_pack};
 pub use info::run_info;
 pub use patch::run_patch;
 pub use perf::{run_perf, run_perf_worker};
-pub use publish::{run_publish_manager, run_publish_patches};
+pub use release::{run_release_files, run_release_manager, run_release_patches};
 
 fn create_parent(path: &Path) -> Result<()> {
     if let Some(parent) = path
