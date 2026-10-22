@@ -320,6 +320,26 @@ fn containers_and_plain_apks_use_the_same_output_pipeline() {
 }
 
 #[test]
+fn the_default_signing_identity_is_named_after_the_whole_output() {
+    let tmp = ScratchDir::new("sdk-default-identity").unwrap();
+    let input = tmp.path().join("input.apk");
+    std::fs::write(&input, apk("")).unwrap();
+    for (name, stem) in [
+        ("patched.apk", "patched"),
+        ("youtube-20.26.46-reseam.apk", "youtube-20.26.46-reseam"),
+    ] {
+        let opened = open_apk(&input, &[], ApkFile::patch_options()).unwrap();
+        let output = PatchArtifact::SingleFile {
+            path: tmp.path().join(name).display().to_string(),
+        };
+        write_signed(opened.apk, &output, None, &mut PatchProfiler::new()).unwrap();
+        for extension in ["pk8", "der"] {
+            assert!(tmp.path().join(format!("{stem}.{extension}")).is_file());
+        }
+    }
+}
+
+#[test]
 fn incompatible_inputs_and_output_fail_before_loading_patches() {
     let tmp = ScratchDir::new("sdk-input-test").unwrap();
     let input = tmp.path().join("app.apkm");

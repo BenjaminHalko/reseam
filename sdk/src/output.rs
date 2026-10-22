@@ -74,9 +74,10 @@ pub(crate) fn write_signed(
 fn signing_paths(files: Option<&SigningKeyFiles>, default_stem: &Path) -> (PathBuf, PathBuf) {
     match files {
         Some(files) => (PathBuf::from(&files.key), PathBuf::from(&files.cert)),
+        // `with_extension` would take the `.2` of a stem such as `app-1.2` for an extension.
         None => (
-            default_stem.with_extension("pk8"),
-            default_stem.with_extension("der"),
+            default_stem.with_added_extension("pk8"),
+            default_stem.with_added_extension("der"),
         ),
     }
 }
