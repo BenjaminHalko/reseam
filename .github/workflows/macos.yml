@@ -1,0 +1,58 @@
+name: macos
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  macos:
+    if: ${{ !github.event.deleted }}
+    runs-on: macos-15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: macos-deps-${{ hashFiles('**/Cargo.lock', '**/*.gradle.kts', '**/libs.versions.toml') }}
+          restore-keys: macos-deps-
+
+      - if: ${{ github.ref_type == 'tag' }}
+        run: cargo xtask check-tag ${{ github.ref_name }}
+
+      - run: cargo install boltffi_cli --version "=$(cat .boltffi-version)" --locked
+
+      - run: rustup target add x86_64-apple-darwin
+
+      - run: cargo xtask regen patch-api
+
+      - run: cargo xtask runtime
+
+      # The JNI headers are the same for both architectures and the JVM is loaded at run time,
+      # so the arm64 runner builds the Intel binary too.
+      - run: cargo build --release -p reseam-cli --target aarch64-apple-darwin --target x86_64-apple-darwin
+
+      - run: |
+          mkdir dist
+          cp target/aarch64-apple-darwin/release/reseam dist/reseam-macos-arm64
+          cp target/x86_64-apple-darwin/release/reseam dist/reseam-macos-x64
+
+      # A dispatch may target a branch, so derive the release tag from the built version.
+      - run: |
+          tag="v$(dist/reseam-macos-arm64 --version | cut -d ' ' -f 2)"
+          gh release view "$tag" > /dev/null 2>&1 || gh release create "$tag" --title "$tag" --notes "" --target "$GITHUB_SHA"
+          gh release upload "$tag" dist/* --clobber
