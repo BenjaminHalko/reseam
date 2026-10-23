@@ -13,6 +13,10 @@ import android.util.Log
 @Export
 @Suppress("DEPRECATION")
 class FolderPicker : Fragment() {
+    // Not kept across recreation: a picker the system rebuilds stores the folder without acting on
+    // it.
+    internal var onPicked: Runnable? = null
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         fragmentManager!!.beginTransaction().remove(this).commit()
         if (requestCode != REQUEST_CODE || resultCode != Activity.RESULT_OK || data == null) return
@@ -31,6 +35,7 @@ class FolderPicker : Fragment() {
         Reseam.bundle(args.getString(BUNDLE)!!)
             .settings
             .setString(args.getString(KEY)!!, uri.toString())
+        onPicked?.run()
     }
 }
 
@@ -40,9 +45,15 @@ private const val KEY = "key"
 private const val REQUEST_CODE = 0x57C4
 
 @Suppress("DEPRECATION")
-internal fun pickFolder(activity: Activity, bundle: String, key: String) {
+internal fun pickFolder(
+    activity: Activity,
+    bundle: String,
+    key: String,
+    onPicked: Runnable? = null,
+) {
     val picker =
         FolderPicker().apply {
+            this.onPicked = onPicked
             arguments =
                 Bundle().apply {
                     putString(BUNDLE, bundle)

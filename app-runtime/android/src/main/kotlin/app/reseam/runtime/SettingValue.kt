@@ -3,6 +3,8 @@
 
 package app.reseam.runtime
 
+import android.app.Activity
+
 /**
  * A bundle setting. Reads before initialization return the default; writes require initialization.
  */
@@ -39,6 +41,12 @@ class FolderValue(bundle: String, key: String, default: String) :
         set(value) {
             Reseam.bundle(bundle).settings.setString(key, value)
         }
+
+    /**
+     * Opens the system folder picker over [activity]. The folder the user picks becomes the value,
+     * then [onPicked] runs on the main thread; it does not run when the user cancels.
+     */
+    fun pick(activity: Activity, onPicked: Runnable) = pickFolder(activity, bundle, key, onPicked)
 }
 
 class ChoiceValue(bundle: String, key: String, default: String) :

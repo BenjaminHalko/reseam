@@ -192,7 +192,7 @@ AppSettings.feedStyle.reset()
 Toast.makeText(context, ExampleStrings.downloadSaved(folder), Toast.LENGTH_SHORT).show()
 ```
 
-A choice reads as the stored value while the setting still lists it, and as the default otherwise. Before the app runtime has started, values read as their defaults. String members without arguments are properties; the others are functions named after the string, taking its `xliff:g` arguments in order.
+A folder setting's `pick(activity, onPicked)` opens the system folder picker, stores the folder the user picks with permission to read and write it, then runs `onPicked`; a cancelled pick runs nothing. A choice reads as the stored value while the setting still lists it, and as the default otherwise. Before the app runtime has started, values read as their defaults. String members without arguments are properties; the others are functions named after the string, taking its `xliff:g` arguments in order.
 
 Outside the `apps/` and `shared/` layout, an extension adds a settings module with `reseamSettings(project(":settings"))`.
 
