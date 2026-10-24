@@ -1,4 +1,4 @@
-export CARGO_BUILD_JOBS := "2"
+export CARGO_BUILD_JOBS := env("CARGO_BUILD_JOBS", "2")
 export GRADLE_OPTS := "-Xmx1g"
 
 gradle := "./gradlew --no-daemon -Dorg.gradle.jvmargs=-Xmx1536m"
