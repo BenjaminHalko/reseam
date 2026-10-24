@@ -2,3 +2,6 @@
 -keep class app.reseam.patch.** { *; }
 -keep class kotlin.** { *; }
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+
+# The native library binds the generated bindings and their callbacks by name when it loads.
+-keep class app.reseam.sdk.** { *; }
