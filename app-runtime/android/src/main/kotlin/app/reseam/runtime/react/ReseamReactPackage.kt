@@ -4,34 +4,23 @@
 package app.reseam.runtime.react
 
 import app.reseam.runtime.Export
-import com.facebook.react.BaseReactPackage
-import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.module.model.ReactModuleInfo
-import com.facebook.react.module.model.ReactModuleInfoProvider
 
-object ReseamReactPackage : BaseReactPackage() {
+/**
+ * The runtime's React Native package. It names no React Native package type, since apps built with
+ * R8 rename them; the patch that adds it makes it implement the app's package interface.
+ */
+object ReseamReactPackage {
     /** Adds the package once, however many bundles call this. */
     @Export
     @JvmStatic
-    fun addTo(packages: MutableList<ReactPackage>) {
-        if (packages.none { it is ReseamReactPackage }) packages.add(this)
+    fun addTo(packages: MutableList<Any?>) {
+        if (packages.none { it === this }) packages.add(this)
     }
 
-    override fun getModule(name: String, context: ReactApplicationContext): NativeModule? =
-        if (name == SETTINGS_MODULE_NAME) ReseamSettingsModule(context) else null
+    fun createNativeModules(context: ReactApplicationContext): List<NativeModule> =
+        listOf(ReseamSettingsModule(context))
 
-    override fun getReactModuleInfoProvider(): ReactModuleInfoProvider {
-        val info =
-            ReactModuleInfo(
-                SETTINGS_MODULE_NAME,
-                ReseamSettingsModule::class.java.name,
-                false,
-                false,
-                false,
-                false,
-            )
-        return ReactModuleInfoProvider { mapOf(SETTINGS_MODULE_NAME to info) }
-    }
+    fun createViewManagers(context: ReactApplicationContext): List<Any> = emptyList()
 }

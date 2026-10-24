@@ -223,7 +223,7 @@ Resource file and value helpers:
 | `CodeScope.openSettings()` | Opens the running bundle's settings over the app's current screen. |
 | `XmlElement.opensSettings()` | Makes an `<intent>` element open the running bundle's settings through `Reseam.startActivity`. |
 | `Reseam` | The app runtime's entry `ExtClass`: `startActivity(Context, Intent)` opens settings for an intent `opensSettings` set up, and starts any other intent. |
-| `ReseamReactPackage` | `addTo(List)` adds the React Native package Hermes gates read settings through to the app's package list, once however many bundles call it. |
+| `CodeScope.addReactPackage(packages)` | Adds the React Native package Hermes gates read settings through to the app's package list, once however many bundles call it. |
 | `Brand(name, light, dark, logo = null, font = null, typography = Typography())` | How the settings screen and branded components look. `Brand.DEFAULT` is Material 3's baseline in the system font. |
 | `ColorScheme(...)` | The Material 3 roles the app runtime paints with, from `primary` to `scrim`. |
 | `Color.hex(value)` | `#rgb`, `#rrggbb`, or `#aarrggbb`. |

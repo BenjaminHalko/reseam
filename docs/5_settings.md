@@ -214,12 +214,12 @@ ui.dialog()
 
 ## React Native apps
 
-[Hermes gates](15_hermes.md#gate-on-a-setting) read settings through a React Native module. Add it from your host's `install`, at the hook on the app's package list:
+[Hermes gates](15_hermes.md#gate-on-a-setting) read settings through a React Native module. Add it from your host's `install`, at a hook where you hold the app's list of React Native packages:
 
 ```kotlin
-getPackages.after { call(ReseamReactPackage.addTo, result) }
+getPackages.after { addReactPackage(result) }
 ```
 
-It is added once, however many bundles call it.
+It is added once, however many bundles call it. React Native's package types can be renamed in apps built with R8, so the engine finds the app's package interface itself.
 
 Next: [Finding code](6_finding_code.md).

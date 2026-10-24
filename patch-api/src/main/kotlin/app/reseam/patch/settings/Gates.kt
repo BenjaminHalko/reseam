@@ -26,7 +26,7 @@ fun JsCodeScope.whenEnabled(setting: ToggleSetting, block: JsCodeScope.() -> Uni
 /**
  * Applies the hooks written in [block] only while the running bundle's [setting] is on. Hermes
  * hooks read it once per process through the app runtime, which needs the app's settings host to
- * add [ReseamReactPackage] to the app's React Native packages.
+ * call [addReactPackage] with the app's React Native packages.
  *
  * ```kotlin
  * gate(AppSettings.hideAds) {

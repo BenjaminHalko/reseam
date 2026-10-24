@@ -12,6 +12,8 @@ import app.reseam.patch.JsValue
 import app.reseam.patch.Type
 import app.reseam.patch.ValueRef
 import app.reseam.patch.XmlElement
+import app.reseam.patch.dex.AccessFlags
+import app.reseam.patch.method
 import app.reseam.patch.types.HermesModule
 import app.reseam.patch.types.RunningBundleInfo
 
@@ -34,14 +36,34 @@ object Reseam : ExtClass("app.reseam.runtime.Reseam") {
     internal val openSettings by static(Type.String)
 }
 
-/**
- * The app runtime's React Native package, which gives the app's JavaScript the settings the Hermes
- * gates read. Call [addTo] with the app's package list; it adds the package once however many
- * bundles call it.
- */
-object ReseamReactPackage : ExtClass("app.reseam.runtime.react.ReseamReactPackage") {
+internal object ReseamReactPackage : ExtClass("app.reseam.runtime.react.ReseamReactPackage") {
     val addTo by static(Type.List)
 }
+
+/**
+ * Adds the app runtime's React Native package, which gives the app's JavaScript the settings the
+ * Hermes gates read, to [packages], the app's list of React Native packages. It adds it once
+ * however many bundles call this, and makes it implement the app's package interface, which apps
+ * built with R8 rename.
+ */
+fun CodeScope.addReactPackage(packages: ValueRef): ValueRef {
+    val runtimePackage = ReseamReactPackage.target.classDef
+    val reactPackage = createViewManagers.owner
+    if (reactPackage !in runtimePackage.interfaces) runtimePackage.addInterface(reactPackage)
+    return call(ReseamReactPackage.addTo, packages)
+}
+
+/**
+ * `ReactPackage.createViewManagers`, which only the package interface declares abstract. The
+ * interface's `createNativeModules` has a default implementation in some React Native versions.
+ */
+private val createViewManagers =
+    method("ReactPackage.createViewManagers") {
+        name("createViewManagers")
+        params("com.facebook.react.bridge.ReactApplicationContext")
+        returns(Type.List)
+        flags(AccessFlags.ABSTRACT)
+    }
 
 internal object AppRuntimeJs : ExtJsModule("reseam-app-runtime-js") {
     override val source = HermesModule.AppRuntime
