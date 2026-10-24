@@ -11,6 +11,8 @@ use super::{PatchResult, PatchStatus, ProgressEvent, ResolvedPlan};
 use crate::context::PatchContext;
 use crate::error::{PatcherError, Result};
 use crate::log::LogEntry;
+use crate::options::PatchOptions;
+use crate::output::{OutputContext, WrittenApk};
 use crate::patch::{Patch, PatchPhase, PatchSpec};
 
 mod results;
@@ -29,13 +31,15 @@ use savepoints::Savepoints;
 /// have without it, so the patches that need it are skipped and dependencies
 /// only they needed are undone. Each patch is reported finished once its
 /// result is final: after execution, or after finalization when it finalizes.
-pub fn apply_patches(
+/// The applied patches that rewrite output run later, through
+/// [`AppliedRun::rewrite_output`], once the host has written the APK.
+pub fn apply_patches<'p>(
     ctx: &mut PatchContext<'_>,
     specs: &[&PatchSpec],
     mut plan: ResolvedPlan,
-    patches: &[&Patch],
+    patches: &[&'p Patch],
     mut observer: impl FnMut(ProgressEvent),
-) -> Result<Vec<PatchResult>> {
+) -> Result<AppliedRun<'p>> {
     #[cfg(feature = "bridge")]
     let _bridge = crate::kotlin::handles::RunGuard::enter()?;
     info!(
@@ -64,7 +68,7 @@ pub fn apply_patches(
             observer(ProgressEvent::Started {
                 patch: reference.clone(),
             });
-            let (status, logs) = invoke(ctx, &plan, patch, PatchPhase::Execute, &mut observer);
+            let (status, logs) = invoke(ctx, &plan, patch, Stage::Execute, &mut observer);
             if status == PatchStatus::Applied {
                 if plan.is_selected(idx) && !patch.finalizes() {
                     savepoints.release(ctx, savepoint)?;
@@ -95,7 +99,7 @@ pub fn apply_patches(
             }
             let _span = info_span!("after_dependents", patch = patch.reference()).entered();
             ctx.begin_patch(patch.reference(), plan.options(idx).clone());
-            let (status, logs) = invoke(ctx, &plan, patch, PatchPhase::Finalize, &mut observer);
+            let (status, logs) = invoke(ctx, &plan, patch, Stage::Finalize, &mut observer);
             if status == PatchStatus::Applied {
                 run.finalize(idx, logs, &mut observer);
             } else {
@@ -121,7 +125,80 @@ pub fn apply_patches(
     ctx.bind_app_entry()?;
     ctx.finish_hermes()?;
     info!("patch application finished");
-    Ok(run.into_results(&plan))
+    let rewrites = plan
+        .order()
+        .iter()
+        .enumerate()
+        .filter(|&(_, &idx)| specs[idx].rewrites_output && run.applied(idx))
+        .map(|(result, &idx)| Rewrite {
+            result,
+            patch: code[idx].expect("an applied patch has its code loaded"),
+            options: plan.options(idx).clone(),
+        })
+        .collect();
+    Ok(AppliedRun {
+        results: run.into_results(&plan),
+        rewrites,
+    })
+}
+
+/// The outcome of [`apply_patches`]: each patch's result, and the applied
+/// patches that rewrite the output once the host has written it.
+pub struct AppliedRun<'p> {
+    results: Vec<PatchResult>,
+    rewrites: Vec<Rewrite<'p>>,
+}
+
+struct Rewrite<'p> {
+    /// Position of the patch's result in [`AppliedRun::results`].
+    result: usize,
+    patch: &'p Patch,
+    options: PatchOptions,
+}
+
+impl AppliedRun<'_> {
+    /// Each patch's result, in the order the run covered them.
+    pub fn results(&self) -> &[PatchResult] {
+        &self.results
+    }
+
+    /// Whether an applied patch rewrites the output, so the host must call
+    /// [`Self::rewrite_output`] between writing and signing.
+    pub fn rewrites_output(&self) -> bool {
+        !self.rewrites.is_empty()
+    }
+
+    /// Runs the applied patches that rewrite output over `apk`, dependencies
+    /// first; their logs join their results. The output is already written, so
+    /// a patch can no longer be left out of it, and a failure ends the run.
+    pub fn rewrite_output(
+        &mut self,
+        apk: &mut WrittenApk,
+        mut observer: impl FnMut(ProgressEvent),
+    ) -> Result<()> {
+        #[cfg(feature = "bridge")]
+        let _bridge = crate::kotlin::handles::RunGuard::enter()?;
+        for rewrite in &self.rewrites {
+            let reference = rewrite.patch.reference();
+            let _span = info_span!("rewrite_output", patch = reference).entered();
+            let mut ctx = OutputContext::new(apk, reference, rewrite.options.clone());
+            let outcome = guarded(|| rewrite.patch.invoke(PatchPhase::RewriteOutput(&mut ctx)));
+            let logs = ctx.take_log_entries();
+            for log in &logs {
+                observer(ProgressEvent::Log(log.clone()));
+            }
+            self.results[rewrite.result].logs.extend(logs);
+            outcome.map_err(|reason| PatcherError::RewriteOutput {
+                patch: reference.to_owned(),
+                reason,
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn into_results(self) -> Vec<PatchResult> {
+        self.results
+    }
 }
 
 /// The outcome of `plan` without touching the APK or loading patch code: which
@@ -136,15 +213,27 @@ pub fn validate_patches(specs: &[&PatchSpec], plan: &ResolvedPlan) -> Vec<PatchR
     run.into_results(plan)
 }
 
+/// The phases a patch runs while the run holds the APK.
+#[derive(Clone, Copy)]
+enum Stage {
+    Execute,
+    Finalize,
+}
+
 fn invoke(
     ctx: &mut PatchContext<'_>,
     plan: &ResolvedPlan,
     patch: &Patch,
-    phase: PatchPhase,
+    stage: Stage,
     observer: &mut impl FnMut(ProgressEvent),
 ) -> (PatchStatus, Vec<LogEntry>) {
     let manifest = ctx.apk().manifest_revision();
-    let outcome = guarded(|| patch.invoke(phase, ctx));
+    let outcome = guarded(|| {
+        patch.invoke(match stage {
+            Stage::Execute => PatchPhase::Execute(ctx),
+            Stage::Finalize => PatchPhase::Finalize(ctx),
+        })
+    });
     let logs = ctx.take_log_entries();
     for log in &logs {
         observer(ProgressEvent::Log(log.clone()));
@@ -153,9 +242,9 @@ fn invoke(
         Ok(()) if plan.delivery().forbids_manifest_edit(manifest, ctx) => unmountable_status(),
         Ok(()) => PatchStatus::Applied,
         Err(reason) => PatchStatus::Failed {
-            reason: match phase {
-                PatchPhase::Execute => reason,
-                PatchPhase::Finalize => format!("after_dependents: {reason}"),
+            reason: match stage {
+                Stage::Execute => reason,
+                Stage::Finalize => format!("after_dependents: {reason}"),
             },
         },
     };

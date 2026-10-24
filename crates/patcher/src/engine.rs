@@ -7,6 +7,6 @@ mod run;
 
 pub use index::PatchIndex;
 pub use plan::{Delivery, PatchSelection, ResolvedPlan};
-pub use run::{apply_patches, validate_patches};
+pub use run::{AppliedRun, apply_patches, validate_patches};
 
 pub use reseam_model::{PatchResult, PatchStatus, ProgressEvent};

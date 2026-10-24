@@ -965,7 +965,7 @@ fn apply(
         ctx.apk().package_name().as_deref(),
         ctx.apk().version_name().as_deref(),
     )?;
-    engine::apply_patches(ctx, &specs, plan, patches, |_| {})
+    engine::apply_patches(ctx, &specs, plan, patches, |_| {}).map(engine::AppliedRun::into_results)
 }
 
 #[test]

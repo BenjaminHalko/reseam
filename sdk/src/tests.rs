@@ -10,7 +10,7 @@ use reseam_apk::{ApkFile, ContainerFormat, ScratchDir};
 use crate::error::Problem;
 use crate::inspect::open_apk;
 use crate::metrics::PatchProfiler;
-use crate::output::write_signed;
+use crate::output::stage_unsigned;
 use crate::{InstallMethod, PatchArtifact, PatchOutput, PatchRequest, inspect_apk, patch};
 
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -289,7 +289,9 @@ fn containers_and_plain_apks_use_the_same_output_pipeline() {
             .resolve(opened.apk.components().len())
             .unwrap();
             let extracted = opened.apk.base().path().to_path_buf();
-            write_signed(opened.apk, &output, None, &mut PatchProfiler::new()).unwrap();
+            stage_unsigned(opened.apk, &output, None, &mut PatchProfiler::new())
+                .and_then(|staged| staged.sign_and_publish(&mut PatchProfiler::new()))
+                .unwrap();
             assert!(!extracted.exists());
             match output {
                 PatchArtifact::SingleFile { path } => {
@@ -315,7 +317,9 @@ fn containers_and_plain_apks_use_the_same_output_pipeline() {
     }
     .resolve(1)
     .unwrap();
-    write_signed(opened.apk, &output, None, &mut PatchProfiler::new()).unwrap();
+    stage_unsigned(opened.apk, &output, None, &mut PatchProfiler::new())
+        .and_then(|staged| staged.sign_and_publish(&mut PatchProfiler::new()))
+        .unwrap();
     assert!(destination.join("plain.apk").is_file());
 }
 
@@ -434,7 +438,11 @@ fn invalid_artifact_targets_preserve_outputs_and_signing_identity() {
         let output = PatchArtifact::SplitDir {
             path: dir.display().to_string(),
         };
-        assert!(write_signed(opened.apk, &output, None, &mut PatchProfiler::new()).is_err());
+        assert!(
+            stage_unsigned(opened.apk, &output, None, &mut PatchProfiler::new())
+                .and_then(|staged| staged.sign_and_publish(&mut PatchProfiler::new()))
+                .is_err()
+        );
         assert_eq!(std::fs::read(&prior).unwrap(), b"prior output");
         assert!(dir.join(blocked).is_dir());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
@@ -445,7 +453,11 @@ fn invalid_artifact_targets_preserve_outputs_and_signing_identity() {
         let output = PatchArtifact::SingleFile {
             path: path.display().to_string(),
         };
-        assert!(write_signed(opened.apk, &output, None, &mut PatchProfiler::new()).is_err());
+        assert!(
+            stage_unsigned(opened.apk, &output, None, &mut PatchProfiler::new())
+                .and_then(|staged| staged.sign_and_publish(&mut PatchProfiler::new()))
+                .is_err()
+        );
         assert!(!path.exists());
     }
     #[cfg(unix)]
@@ -465,12 +477,13 @@ fn invalid_artifact_targets_preserve_outputs_and_signing_identity() {
             cert: cert.display().to_string(),
         };
         assert!(
-            write_signed(
+            stage_unsigned(
                 opened.apk,
                 &output,
                 Some(&signing),
                 &mut PatchProfiler::new()
             )
+            .and_then(|staged| staged.sign_and_publish(&mut PatchProfiler::new()))
             .is_err()
         );
         assert_eq!(std::fs::read(destination).unwrap(), original_key);

@@ -105,6 +105,10 @@ impl<'a> PatchContext<'a> {
         &self.options
     }
 
+    pub(crate) fn log_and_options(&mut self) -> (&mut PatchLog, &PatchOptions) {
+        (&mut self.log, &self.options)
+    }
+
     pub(crate) fn begin_patch(&mut self, patch: &str, options: PatchOptions) {
         self.log = PatchLog::new(patch);
         self.options = options;

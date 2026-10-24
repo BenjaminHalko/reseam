@@ -12,7 +12,10 @@ fn adding(
     extra: impl Fn(&mut PatchContext<'_>) -> Result<()> + Send + Sync + 'static,
 ) -> Patch {
     let id = declaration.id.clone();
-    Patch::new(declaration, false, move |_, ctx| {
+    Patch::new(declaration, false, move |phase| {
+        let PatchPhase::Execute(ctx) = phase else {
+            unreachable!("fixture patches only execute");
+        };
         runs.lock().unwrap().push(id.clone());
         ctx.inject_file(
             0,
@@ -62,7 +65,8 @@ fn run_patches(delivery: Delivery, patches: &[&Patch], runs: &Arc<Mutex<Vec<Stri
             }
         },
     )
-    .unwrap();
+    .unwrap()
+    .into_results();
     Outcome {
         results: results
             .iter()

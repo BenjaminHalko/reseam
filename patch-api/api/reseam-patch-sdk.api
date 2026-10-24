@@ -179,6 +179,7 @@ public final class app/reseam/patch/ExtMethod {
 public final class app/reseam/patch/ExternalPatch : app/reseam/patch/ReseamPatch {
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
 	public fun afterDependents (Lapp/reseam/patch/PatchRuntime;)V
+	public fun afterWrite (Lapp/reseam/patch/OutputRuntime;)V
 	public fun execute (Lapp/reseam/patch/PatchRuntime;)Ljava/lang/Void;
 	public synthetic fun execute (Lapp/reseam/patch/PatchRuntime;)V
 	public final fun getBundle ()Ljava/lang/String;
@@ -191,6 +192,7 @@ public final class app/reseam/patch/ExternalPatch : app/reseam/patch/ReseamPatch
 	public final fun getId ()Ljava/lang/String;
 	public fun getName ()Ljava/lang/String;
 	public fun getOptions ()Ljava/util/List;
+	public fun getRewritesOutput ()Z
 	public fun getUniversal ()Z
 	public fun toString ()Ljava/lang/String;
 }
@@ -487,8 +489,24 @@ public abstract interface class app/reseam/patch/Otherwise {
 	public abstract fun otherwise (Lkotlin/jvm/functions/Function1;)V
 }
 
+public final class app/reseam/patch/OutputFiles {
+	public final fun component (Ljava/lang/String;)Lapp/reseam/patch/OutputFiles;
+	public final fun components ()Ljava/util/List;
+	public final fun getFile ()Ljava/io/File;
+	public final fun replace (Ljava/io/File;)V
+}
+
+public final class app/reseam/patch/OutputRuntime {
+	public final fun bundleFile (Ljava/lang/String;)Ljava/io/File;
+	public final fun getLog ()Lapp/reseam/patch/PatchLogger;
+	public final fun getOptions ()Lapp/reseam/patch/RuntimeOptions;
+	public final fun getOutput ()Lapp/reseam/patch/OutputFiles;
+	public final fun tempFile (Ljava/lang/String;)Ljava/io/File;
+}
+
 public final class app/reseam/patch/PatchBuilder : app/reseam/patch/PatchDeclaration {
 	public final fun afterDependents (Lkotlin/jvm/functions/Function1;)V
+	public final fun afterWrite (Lkotlin/jvm/functions/Function1;)V
 	public final fun boolOption (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Boolean;Z)Lapp/reseam/patch/BoolOption;
 	public static synthetic fun boolOption$default (Lapp/reseam/patch/PatchBuilder;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Boolean;ZILjava/lang/Object;)Lapp/reseam/patch/BoolOption;
 	public final fun description (Ljava/lang/String;)V
@@ -653,6 +671,7 @@ public abstract interface class app/reseam/patch/RankScope {
 
 public abstract interface class app/reseam/patch/ReseamPatch {
 	public fun afterDependents (Lapp/reseam/patch/PatchRuntime;)V
+	public fun afterWrite (Lapp/reseam/patch/OutputRuntime;)V
 	public abstract fun execute (Lapp/reseam/patch/PatchRuntime;)V
 	public fun getCompatibleWith ()Ljava/util/List;
 	public fun getDependencies ()Ljava/util/List;
@@ -662,11 +681,13 @@ public abstract interface class app/reseam/patch/ReseamPatch {
 	public fun getHidden ()Z
 	public abstract fun getName ()Ljava/lang/String;
 	public fun getOptions ()Ljava/util/List;
+	public fun getRewritesOutput ()Z
 	public fun getUniversal ()Z
 }
 
 public final class app/reseam/patch/ReseamPatch$DefaultImpls {
 	public static fun afterDependents (Lapp/reseam/patch/ReseamPatch;Lapp/reseam/patch/PatchRuntime;)V
+	public static fun afterWrite (Lapp/reseam/patch/ReseamPatch;Lapp/reseam/patch/OutputRuntime;)V
 	public static fun getCompatibleWith (Lapp/reseam/patch/ReseamPatch;)Ljava/util/List;
 	public static fun getDependencies (Lapp/reseam/patch/ReseamPatch;)Ljava/util/List;
 	public static fun getDescription (Lapp/reseam/patch/ReseamPatch;)Ljava/lang/String;
@@ -674,6 +695,7 @@ public final class app/reseam/patch/ReseamPatch$DefaultImpls {
 	public static fun getFinalizes (Lapp/reseam/patch/ReseamPatch;)Z
 	public static fun getHidden (Lapp/reseam/patch/ReseamPatch;)Z
 	public static fun getOptions (Lapp/reseam/patch/ReseamPatch;)Ljava/util/List;
+	public static fun getRewritesOutput (Lapp/reseam/patch/ReseamPatch;)Z
 	public static fun getUniversal (Lapp/reseam/patch/ReseamPatch;)Z
 }
 
@@ -1439,6 +1461,7 @@ public final class app/reseam/patch/dex/Opcode$Companion {
 }
 
 public final class app/reseam/patch/settings/AppRuntimeKt {
+	public static final fun addReactPackage (Lapp/reseam/patch/CodeScope;Lapp/reseam/patch/ValueRef;)Lapp/reseam/patch/ValueRef;
 	public static final fun openSettings (Lapp/reseam/patch/CodeScope;)Lapp/reseam/patch/ValueRef;
 	public static final fun opensSettings (Lapp/reseam/patch/XmlElement;)V
 	public static final fun valueOf (Lapp/reseam/patch/CodeScope;Lapp/reseam/patch/settings/ChoiceSetting;)Lapp/reseam/patch/ValueRef;
@@ -1461,7 +1484,6 @@ public final class app/reseam/patch/settings/Brand {
 }
 
 public final class app/reseam/patch/settings/Brand$Companion {
-	public static final fun addReactPackage (Lapp/reseam/patch/CodeScope;Lapp/reseam/patch/ValueRef;)Lapp/reseam/patch/ValueRef;
 	public final fun getDEFAULT ()Lapp/reseam/patch/settings/Brand;
 }
 
@@ -1594,6 +1616,7 @@ public abstract class app/reseam/patch/settings/SettingsGroup {
 
 public final class app/reseam/patch/settings/SettingsHost : app/reseam/patch/ReseamPatch {
 	public fun afterDependents (Lapp/reseam/patch/PatchRuntime;)V
+	public fun afterWrite (Lapp/reseam/patch/OutputRuntime;)V
 	public fun execute (Lapp/reseam/patch/PatchRuntime;)V
 	public final fun getAppId ()Ljava/lang/String;
 	public fun getCompatibleWith ()Ljava/util/List;
@@ -1604,6 +1627,7 @@ public final class app/reseam/patch/settings/SettingsHost : app/reseam/patch/Res
 	public fun getHidden ()Z
 	public fun getName ()Ljava/lang/String;
 	public fun getOptions ()Ljava/util/List;
+	public fun getRewritesOutput ()Z
 	public fun getUniversal ()Z
 	public final fun register (Lapp/reseam/patch/ReseamPatch;Ljava/util/List;)V
 	public fun toString ()Ljava/lang/String;

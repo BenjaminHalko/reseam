@@ -68,11 +68,12 @@ pub(super) fn read_patch(
         dependencies,
         compatibility: compatibility.into_iter().collect(),
         options,
+        rewrites_output: boolean(env, patch, "getRewritesOutput")?,
     };
     let finalizes = boolean(env, patch, "getFinalizes")?;
     let callback = KotlinCallback::new(env.new_global_ref(&found.object)?, Arc::clone(loader));
-    Ok(Patch::new(spec, finalizes, move |phase, context| {
-        callback.invoke(phase, context)
+    Ok(Patch::new(spec, finalizes, move |phase| {
+        callback.invoke(phase)
     }))
 }
 

@@ -78,6 +78,9 @@ pub enum PatcherError {
     #[error("app entry: {0}")]
     AppEntry(String),
 
+    #[error("patch {patch} failed to rewrite the output: {reason}")]
+    RewriteOutput { patch: String, reason: String },
+
     #[error("DEX error: {0}")]
     Dex(#[from] reseam_apk::reseam_dex::DexError),
 

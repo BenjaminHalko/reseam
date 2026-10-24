@@ -121,6 +121,9 @@ pub(crate) fn classify(error: &(dyn std::error::Error + 'static)) -> Problem {
                     built: built.clone(),
                     running: running.clone(),
                 }),
+                Some(PatcherError::RewriteOutput { patch, .. }) => Some(Problem::PatchesFailed {
+                    patches: vec![patch.clone()],
+                }),
                 _ => None,
             }
         })

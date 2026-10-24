@@ -46,6 +46,7 @@ pub enum PatchPhase {
     ApplyPatches,
     WriteUnsignedArtifacts,
     LoadSigningKey,
+    RewriteOutput,
     SignArtifacts,
 }
 
@@ -58,6 +59,7 @@ impl PatchPhase {
             Self::ApplyPatches => "apply_patches",
             Self::WriteUnsignedArtifacts => "write_unsigned_artifacts",
             Self::LoadSigningKey => "load_signing_key",
+            Self::RewriteOutput => "rewrite_output",
             Self::SignArtifacts => "sign_artifacts",
         }
     }

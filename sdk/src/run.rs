@@ -5,7 +5,7 @@ use crate::error::Result;
 use reseam_apk::ApkFile;
 use reseam_patcher::bundle::PatchBundle;
 use reseam_patcher::context::{ExtensionSet, PatchContext};
-use reseam_patcher::engine::{self, Delivery, PatchResult, PatchStatus, ResolvedPlan};
+use reseam_patcher::engine::{self, AppliedRun, Delivery, PatchResult, PatchStatus, ResolvedPlan};
 use reseam_patcher::{Patch, PatchSpec};
 
 use crate::TrustStore;
@@ -13,7 +13,7 @@ use crate::error::Problem;
 use crate::inspect::{OpenedApk, PreparedInspection, TrustedArchive, open_apk, open_bundles};
 use crate::memory::release_process_memory;
 use crate::metrics::{ApplyDiagnostics, PatchPhase, PatchProfiler};
-use crate::output::write_signed;
+use crate::output::stage_unsigned;
 use crate::{InstallMethod, PatchArtifact, PatchOutcome, PatchRequest, RunEvent};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -134,9 +134,9 @@ fn run(
             .map(|(archive, patches)| archive.load(patches))
             .collect::<Result<Vec<_>>>()
     })?;
-    let results = apply(&mut opened, &bundles, plan, emit, profiler)?;
+    let mut applied = apply(&mut opened, &bundles, plan, emit, profiler)?;
     if !request.leave_out_failed {
-        ensure_none_failed(&results)?;
+        ensure_none_failed(applied.results())?;
     }
 
     emit(info(format!(
@@ -162,8 +162,17 @@ fn run(
         }
     }
     release_process_memory();
-    write_signed(opened.apk, &output, request.signing.as_ref(), profiler)?;
-    Ok((results, output))
+    let staged = stage_unsigned(opened.apk, &output, request.signing.as_ref(), profiler)?;
+    if applied.rewrites_output() {
+        // The patch model is gone; give its memory back before patch code works
+        // on whole APK files.
+        release_process_memory();
+        profiler.measure(PatchPhase::RewriteOutput, || {
+            applied.rewrite_output(&mut staged.written(), |event| emit(event.into()))
+        })?;
+    }
+    staged.sign_and_publish(profiler)?;
+    Ok((applied.into_results(), output))
 }
 
 /// The ids of the patches `plan` executes, per archive. Plan positions follow
@@ -192,13 +201,13 @@ fn delivery(method: InstallMethod) -> Delivery {
 }
 
 /// Applies `plan` to `opened`.
-fn apply(
+fn apply<'b>(
     opened: &mut OpenedApk,
-    bundles: &[PatchBundle],
+    bundles: &'b [PatchBundle],
     plan: ResolvedPlan,
     emit: &mut impl FnMut(RunEvent),
     profiler: &mut PatchProfiler,
-) -> Result<Vec<PatchResult>> {
+) -> Result<AppliedRun<'b>> {
     let specs: Vec<&PatchSpec> = bundles.iter().flat_map(PatchBundle::catalog).collect();
     let patches: Vec<&Patch> = bundles.iter().flat_map(PatchBundle::patches).collect();
     let extension_paths: Vec<_> = bundles
@@ -207,13 +216,13 @@ fn apply(
         .collect();
     let mut ctx = PatchContext::new(&mut opened.apk);
     ctx.set_extensions(ExtensionSet::load(&extension_paths)?);
-    let results = profiler.measure(PatchPhase::ApplyPatches, || {
+    let applied = profiler.measure(PatchPhase::ApplyPatches, || {
         engine::apply_patches(&mut ctx, &specs, plan, &patches, |event| {
             emit(event.into());
         })
     })?;
     profiler.set_apply_diagnostics(apply_diagnostics(&ctx));
-    Ok(results)
+    Ok(applied)
 }
 
 fn open_input(request: &PatchRequest) -> Result<OpenedApk> {

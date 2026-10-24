@@ -136,7 +136,16 @@ pub(crate) fn load_patches(
         .map(|LoadedPatch { spec, finalizes }| {
             let loader = Arc::clone(&loader);
             let reference = spec.reference();
-            Patch::new(spec, finalizes, move |phase, context| {
+            Patch::new(spec, finalizes, move |phase| {
+                let (phase, context) = match phase {
+                    PatchPhase::Execute(context) => (Phase::Execute, context),
+                    PatchPhase::Finalize(context) => (Phase::Finalize, context),
+                    PatchPhase::RewriteOutput(_) => {
+                        return Err(PatcherError::Bridge(format!(
+                            "{reference} rewrites the written APK, which the browser patcher cannot run"
+                        )));
+                    }
+                };
                 let guard = ContextGuard::enter(
                     context,
                     RunningBundle {
@@ -149,10 +158,7 @@ pub(crate) fn load_patches(
                 let result = call(&Request::Invoke {
                     handle: loader.handle,
                     patch: &reference,
-                    phase: match phase {
-                        PatchPhase::Execute => Phase::Execute,
-                        PatchPhase::Finalize => Phase::Finalize,
-                    },
+                    phase,
                 });
                 let native = guard.finish();
                 result.and(native)

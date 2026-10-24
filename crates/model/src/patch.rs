@@ -95,6 +95,11 @@ pub struct PatchSpec {
     pub dependencies: Vec<String>,
     pub compatibility: Compatibility,
     pub options: Vec<OptionDeclaration>,
+    /// Replaces the APK files the engine writes, before they are signed. A mount
+    /// build leaves such a patch out, since it cannot tell what the files hold.
+    #[serde(default)]
+    #[boltffi::default(false)]
+    pub rewrites_output: bool,
 }
 
 impl PatchSpec {
@@ -185,6 +190,7 @@ mod tests {
             dependencies: Vec::new(),
             compatibility,
             options: Vec::new(),
+            rewrites_output: false,
         }
     }
 

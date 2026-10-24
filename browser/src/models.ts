@@ -11,7 +11,7 @@ export type Compatibility = { kind: 'universal' } | { kind: 'packages'; packages
 export interface PatchMetadata {
   bundle: string; id: string; name: string; hidden: boolean; description: string; enabled_by_default: boolean;
   dependencies: string[]; options: OptionDeclaration[]; incompatibility: string | null; presets: Preset[];
-  compatibility: Compatibility;
+  compatibility: Compatibility; rewrites_output: boolean;
 }
 export type Problem =
   | { type: 'bundle_too_old' | 'engine_too_old'; bundle: string; built: string; running: string }
@@ -55,7 +55,7 @@ export type RunEvent =
   | { type: 'patches_reverted'; patches: string[] };
 export type PatchPhase =
   | 'open_apk' | 'load_bundles' | 'validate_patches' | 'apply_patches'
-  | 'write_unsigned_artifacts' | 'load_signing_key' | 'sign_artifacts';
+  | 'write_unsigned_artifacts' | 'load_signing_key' | 'rewrite_output' | 'sign_artifacts';
 export interface Outcome {
   output: { kind: 'single_file' | 'split_dir'; path: string };
   results: PatchResult[];

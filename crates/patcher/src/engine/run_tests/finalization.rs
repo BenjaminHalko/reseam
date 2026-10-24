@@ -14,16 +14,14 @@ enum Failure {
 
 fn hooked(declaration: PatchSpec, failure: Failure, events: Arc<Mutex<Vec<String>>>) -> Patch {
     let id = declaration.id.clone();
-    Patch::new(declaration, true, move |phase, _| {
-        let name = match phase {
-            PatchPhase::Execute => "execute",
-            PatchPhase::Finalize => "finalize",
+    Patch::new(declaration, true, move |phase| {
+        let (name, fails) = match phase {
+            PatchPhase::Execute(_) => ("execute", matches!(failure, Failure::Execute)),
+            PatchPhase::Finalize(_) => ("finalize", matches!(failure, Failure::Finalize)),
+            PatchPhase::RewriteOutput(_) => unreachable!("fixture specs do not rewrite output"),
         };
         events.lock().unwrap().push(format!("{name}:{id}"));
-        if matches!(
-            (phase, failure),
-            (PatchPhase::Execute, Failure::Execute) | (PatchPhase::Finalize, Failure::Finalize)
-        ) {
+        if fails {
             return Err(PatcherError::Bridge("fixture callback failed".into()));
         }
         Ok(())
@@ -81,7 +79,8 @@ fn finalization_orders_hooks_and_emits_one_terminal_result() {
                 _ => {}
             },
         )
-        .unwrap();
+        .unwrap()
+        .into_results();
         assert_eq!(
             results
                 .iter()

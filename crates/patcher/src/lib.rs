@@ -10,6 +10,7 @@ pub mod error;
 pub mod kotlin;
 pub mod log;
 pub mod options;
+pub mod output;
 pub mod patch;
 
 pub use crate::patch::{

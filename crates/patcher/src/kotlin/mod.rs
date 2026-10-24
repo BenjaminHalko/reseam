@@ -27,6 +27,7 @@ mod manifest;
 #[cfg(feature = "kotlin")]
 mod metadata;
 mod options;
+mod output;
 #[cfg(feature = "kotlin")]
 mod patch;
 mod pool_copies;

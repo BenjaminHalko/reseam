@@ -3,19 +3,19 @@
 
 use boltffi::export;
 
-use super::handles::with_ctx;
+use super::handles::with_patch;
 
 #[export]
 pub fn log_info(msg: String) {
-    with_ctx(|ctx| ctx.log().info(msg));
+    with_patch(|log, _| log.info(msg));
 }
 
 #[export]
 pub fn log_warn(msg: String) {
-    with_ctx(|ctx| ctx.log().warn(msg));
+    with_patch(|log, _| log.warn(msg));
 }
 
 #[export]
 pub fn log_debug(msg: String) {
-    with_ctx(|ctx| ctx.log().debug(msg));
+    with_patch(|log, _| log.debug(msg));
 }

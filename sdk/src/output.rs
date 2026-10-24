@@ -6,6 +6,7 @@ use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use reseam_apk::{ApkFile, ApkWriteOptions};
+use reseam_patcher::output::WrittenApk;
 use reseam_sign::SigningKey;
 use tempfile::TempDir;
 use tracing::info;
@@ -14,12 +15,21 @@ use crate::error::{HostError, Result, file_error};
 use crate::metrics::{PatchPhase, PatchProfiler};
 use crate::{PatchArtifact, SigningKeyFiles};
 
-pub(crate) fn write_signed(
+/// Unsigned output staged beside its destinations, waiting to be signed.
+pub(crate) struct StagedOutput {
+    publication: Publication,
+    components: Vec<String>,
+    key: SigningKey,
+}
+
+/// Writes `apk` unsigned into a staging directory beside its destinations and
+/// loads the key that will sign it.
+pub(crate) fn stage_unsigned(
     apk: ApkFile,
     output: &PatchArtifact,
     signing: Option<&SigningKeyFiles>,
     profiler: &mut PatchProfiler,
-) -> Result<()> {
+) -> Result<StagedOutput> {
     let (dir, key_stem) = match output {
         PatchArtifact::SingleFile { path } => (
             Path::new(path)
@@ -35,6 +45,11 @@ pub(crate) fn write_signed(
         .prefix(".reseam-")
         .tempdir_in(dir)
         .map_err(|source| file_error("create output staging directory", dir, source))?;
+    let components = apk
+        .components()
+        .iter()
+        .map(|component| component.name().to_owned())
+        .collect();
     let unsigned = profiler
         .measure(PatchPhase::WriteUnsignedArtifacts, || {
             apk.write_unsigned_files(ApkWriteOptions::default(), dir)
@@ -44,7 +59,7 @@ pub(crate) fn write_signed(
             source,
         })?;
     drop(apk);
-    let mut publication = Publication::new(staging, &unsigned, output)?;
+    let publication = Publication::new(staging, &unsigned, output)?;
     let (key_path, cert_path) = signing_paths(signing, &key_stem);
     for artifact in &publication.artifacts {
         for identity in [&key_path, &cert_path] {
@@ -58,17 +73,52 @@ pub(crate) fn write_signed(
     let key = profiler.measure(PatchPhase::LoadSigningKey, || {
         SigningKey::load_or_generate(&key_path, &cert_path)
     })?;
-    profiler.measure(PatchPhase::SignArtifacts, || {
-        unsigned
-            .iter()
-            .zip(&publication.artifacts)
-            .try_for_each(|((_, file), artifact)| {
-                reseam_sign::v2::sign_file_in_place(file, &key)?;
-                stage_file(file, &artifact.staged)
-                    .map_err(|source| file_error("stage signed APK", &artifact.destination, source))
+    for ((_, file), artifact) in unsigned.iter().zip(&publication.artifacts) {
+        stage_file(file, &artifact.staged)
+            .map_err(|source| file_error("stage APK", &artifact.destination, source))?;
+    }
+    Ok(StagedOutput {
+        publication,
+        components,
+        key,
+    })
+}
+
+impl StagedOutput {
+    /// The staged files as patches that rewrite output see them, with the
+    /// staging directory as their scratch space.
+    pub(crate) fn written(&self) -> WrittenApk {
+        WrittenApk::new(
+            self.components
+                .iter()
+                .cloned()
+                .zip(
+                    self.publication
+                        .artifacts
+                        .iter()
+                        .map(|artifact| artifact.staged.clone()),
+                )
+                .collect(),
+            self.publication.staging.path().to_owned(),
+        )
+    }
+
+    pub(crate) fn sign_and_publish(mut self, profiler: &mut PatchProfiler) -> Result<()> {
+        profiler.measure(PatchPhase::SignArtifacts, || {
+            self.publication.artifacts.iter().try_for_each(|artifact| {
+                let file = File::options()
+                    .read(true)
+                    .write(true)
+                    .open(&artifact.staged)
+                    .map_err(|source| {
+                        file_error("open APK to sign", &artifact.destination, source)
+                    })?;
+                reseam_sign::v2::sign_file_in_place(&file, &self.key)?;
+                Ok::<_, HostError>(())
             })
-    })?;
-    publication.publish()
+        })?;
+        self.publication.publish()
+    }
 }
 
 fn signing_paths(files: Option<&SigningKeyFiles>, default_stem: &Path) -> (PathBuf, PathBuf) {

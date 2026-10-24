@@ -43,6 +43,7 @@ fn declared(bundle: &str, id: &str, dependencies: &[&str]) -> PatchSpec {
         .into_iter()
         .collect(),
         options: Vec::new(),
+        rewrites_output: false,
     }
 }
 

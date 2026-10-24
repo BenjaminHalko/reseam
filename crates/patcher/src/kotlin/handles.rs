@@ -27,6 +27,9 @@ pub(super) use super::pool_copies::{PoolKind, copied_pool, remember_pool};
 use super::xml;
 
 use crate::error::{PatcherError, Result as PatcherResult};
+use crate::log::PatchLog;
+use crate::options::PatchOptions;
+use crate::output::OutputContext;
 
 use crate::context::PatchContext;
 pub(super) use crate::context::{code_mut, method_mut};
@@ -36,6 +39,7 @@ thread_local! {
     static KOTLIN_RUN: RefCell<Option<Arc<Global<JObject<'static>>>>> = const { RefCell::new(None) };
     static RUN_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static CTX_PTR: Cell<*mut ()> = const { Cell::new(std::ptr::null_mut()) };
+    static OUTPUT_PTR: Cell<*mut ()> = const { Cell::new(std::ptr::null_mut()) };
     static FAILURE: RefCell<Option<String>> = const { RefCell::new(None) };
     static REVISION: Cell<u64> = const { Cell::new(0) };
     static CHANGES: RefCell<VecDeque<MethodChange>> = const { RefCell::new(VecDeque::new()) };
@@ -147,8 +151,8 @@ pub extern "C" fn reseam_patch_call_failed() -> i32 {
 
 #[boltffi::export]
 pub fn check_call() -> Result<(), String> {
-    if !context_is_active() {
-        return Err("patch callbacks require an active context on this thread".into());
+    if !phase_is_active() {
+        return Err("patch callbacks require a running patch phase on this thread".into());
     }
     FAILURE.with(|failure| {
         failure
@@ -225,15 +229,7 @@ pub fn mutation_revision() -> u64 {
 
 impl<'ctx, 'apk> ContextGuard<'ctx, 'apk> {
     pub fn enter(ctx: &'ctx mut PatchContext<'apk>, bundle: RunningBundle) -> PatcherResult<Self> {
-        CTX_PTR.with(|cell| {
-            if !cell.get().is_null() {
-                return Err(PatcherError::Bridge("nested patch context".into()));
-            }
-            cell.set(std::ptr::from_mut(ctx).cast());
-            Ok(())
-        })?;
-        BUNDLE.with(|running| *running.borrow_mut() = Some(bundle));
-        FAILURE.with(|failure| *failure.borrow_mut() = None);
+        enter_phase(&CTX_PTR, std::ptr::from_mut(ctx).cast(), bundle)?;
         Ok(Self {
             _context: std::marker::PhantomData,
         })
@@ -243,12 +239,7 @@ impl<'ctx, 'apk> ContextGuard<'ctx, 'apk> {
         if let Err(error) = xml::finish() {
             record_failure(error);
         }
-        let outcome = FAILURE.with(|failure| {
-            failure
-                .borrow_mut()
-                .take()
-                .map_or(Ok(()), |reason| Err(PatcherError::Bridge(reason)))
-        });
+        let outcome = take_failure();
         drop(self);
         outcome
     }
@@ -256,14 +247,104 @@ impl<'ctx, 'apk> ContextGuard<'ctx, 'apk> {
 
 impl Drop for ContextGuard<'_, '_> {
     fn drop(&mut self) {
-        CTX_PTR.with(|cell| cell.set(std::ptr::null_mut()));
-        BUNDLE.with(|running| *running.borrow_mut() = None);
+        leave_phase(&CTX_PTR);
         xml::reset();
     }
 }
 
+/// Makes `ctx` the output context of the exports a patch calls while it
+/// rewrites output.
+#[cfg(feature = "kotlin")]
+pub(super) struct OutputGuard<'ctx, 'apk> {
+    _context: std::marker::PhantomData<&'ctx mut OutputContext<'apk>>,
+}
+
+#[cfg(feature = "kotlin")]
+impl<'ctx, 'apk> OutputGuard<'ctx, 'apk> {
+    pub fn enter(ctx: &'ctx mut OutputContext<'apk>, bundle: RunningBundle) -> PatcherResult<Self> {
+        enter_phase(&OUTPUT_PTR, std::ptr::from_mut(ctx).cast(), bundle)?;
+        Ok(Self {
+            _context: std::marker::PhantomData,
+        })
+    }
+
+    pub fn finish(self) -> PatcherResult<()> {
+        let outcome = take_failure();
+        drop(self);
+        outcome
+    }
+}
+
+#[cfg(feature = "kotlin")]
+impl Drop for OutputGuard<'_, '_> {
+    fn drop(&mut self) {
+        leave_phase(&OUTPUT_PTR);
+    }
+}
+
+fn enter_phase(
+    slot: &'static std::thread::LocalKey<Cell<*mut ()>>,
+    ctx: *mut (),
+    bundle: RunningBundle,
+) -> PatcherResult<()> {
+    if phase_is_active() {
+        return Err(PatcherError::Bridge("nested patch context".into()));
+    }
+    slot.with(|cell| cell.set(ctx));
+    BUNDLE.with(|running| *running.borrow_mut() = Some(bundle));
+    FAILURE.with(|failure| *failure.borrow_mut() = None);
+    Ok(())
+}
+
+fn leave_phase(slot: &'static std::thread::LocalKey<Cell<*mut ()>>) {
+    slot.with(|cell| cell.set(std::ptr::null_mut()));
+    BUNDLE.with(|running| *running.borrow_mut() = None);
+}
+
+fn take_failure() -> PatcherResult<()> {
+    FAILURE.with(|failure| {
+        failure
+            .borrow_mut()
+            .take()
+            .map_or(Ok(()), |reason| Err(PatcherError::Bridge(reason)))
+    })
+}
+
 pub(super) fn context_is_active() -> bool {
     CTX_PTR.with(|cell| !cell.get().is_null())
+}
+
+fn phase_is_active() -> bool {
+    context_is_active() || OUTPUT_PTR.with(|cell| !cell.get().is_null())
+}
+
+/// Runs `f` with the log and options of the patch whose phase is running.
+pub(super) fn with_patch<R: Default>(f: impl FnOnce(&mut PatchLog, &PatchOptions) -> R) -> R {
+    if context_is_active() {
+        return with_ctx(|ctx| {
+            let (log, options) = ctx.log_and_options();
+            f(log, options)
+        });
+    }
+    with_output(|ctx| {
+        let (log, options) = ctx.log_and_options();
+        f(log, options)
+    })
+}
+
+pub(super) fn with_output<R: Default>(f: impl FnOnce(&mut OutputContext<'_>) -> R) -> R {
+    checked(OUTPUT_PTR.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            return Err(PatcherError::Bridge(
+                "this call is only available while a patch rewrites output".into(),
+            ));
+        }
+        // SAFETY: the pointer was set from a live `&mut OutputContext` by
+        // `OutputGuard::enter` on this thread and is cleared before that borrow
+        // ends; exported functions run on the same thread, one at a time.
+        Ok(f(unsafe { &mut *ptr.cast::<OutputContext<'_>>() }))
+    }))
 }
 
 pub(super) fn with_ctx<R: Default>(f: impl FnOnce(&mut PatchContext<'_>) -> R) -> R {

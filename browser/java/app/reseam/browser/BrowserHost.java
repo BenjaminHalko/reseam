@@ -151,7 +151,8 @@ public final class BrowserHost {
             }
             return map("bundle", bundle, "id", id, "name", name == null ? id : name, "hidden", hidden,
                 "description", get(patch, "getDescription"), "enabled_by_default", !hidden && (Boolean)get(patch, "getEnabled"),
-                "dependencies", dependencies, "compatibility", compatibility.isEmpty() ? map("kind", "universal") : map("kind", "packages", "packages", compatibility), "options", options);
+                "dependencies", dependencies, "compatibility", compatibility.isEmpty() ? map("kind", "universal") : map("kind", "packages", "packages", compatibility), "options", options,
+                "rewrites_output", get(patch, "getRewritesOutput"));
         }
     }
 

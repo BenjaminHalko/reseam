@@ -50,6 +50,19 @@ interface ReseamPatch {
      */
     val finalizes: Boolean
         get() = true
+
+    /**
+     * Runs after the engine wrote the APK files and before it signs them, for patches that
+     * [rewritesOutput]. Patches that do run dependencies first.
+     */
+    fun afterWrite(ctx: OutputRuntime) {}
+
+    /**
+     * Whether [afterWrite] does work. A mount build leaves such a patch out, since the engine
+     * cannot tell what the replaced files hold.
+     */
+    val rewritesOutput: Boolean
+        get() = false
 }
 
 data class CompatiblePackage(
@@ -103,6 +116,7 @@ class PatchBuilder internal constructor(private val name: String?) : PatchDeclar
         mutableListOf<Pair<SettingsHost, PatchRuntime.() -> List<SettingsSection>>>()
     private var executeBlock: (PatchRuntime.() -> Unit)? = null
     private var afterDependentsBlock: (PatchRuntime.() -> Unit)? = null
+    private var afterWriteBlock: (OutputRuntime.() -> Unit)? = null
 
     fun description(text: String) {
         description = text.trimIndent()
@@ -185,11 +199,20 @@ class PatchBuilder internal constructor(private val name: String?) : PatchDeclar
         afterDependentsBlock = block
     }
 
+    /**
+     * Works on the APK files the engine wrote, before it signs them. The engine has released the
+     * patched app by then: [OutputRuntime] reaches only the files, the bundle and the options.
+     */
+    fun afterWrite(block: OutputRuntime.() -> Unit) {
+        afterWriteBlock = block
+    }
+
     internal fun build(): ReseamPatch {
         val builder = this
         val contributions = settings.toList()
         val execute = executeBlock
         val finalize = afterDependentsBlock
+        val rewrite = afterWriteBlock
         return object : ReseamPatch {
             override val name = builder.name
             override val hidden = builder.hidden
@@ -199,6 +222,7 @@ class PatchBuilder internal constructor(private val name: String?) : PatchDeclar
             override val enabled = !builder.hidden && (builder.enabledByDefault ?: !universal)
             override val options = builder.options.toList()
             override val finalizes = finalize != null
+            override val rewritesOutput = rewrite != null
 
             override fun execute(ctx: PatchRuntime) {
                 execute?.invoke(ctx)
@@ -209,6 +233,10 @@ class PatchBuilder internal constructor(private val name: String?) : PatchDeclar
 
             override fun afterDependents(ctx: PatchRuntime) {
                 finalize?.invoke(ctx)
+            }
+
+            override fun afterWrite(ctx: OutputRuntime) {
+                rewrite?.invoke(ctx)
             }
 
             override fun toString() = name ?: "internal patch"

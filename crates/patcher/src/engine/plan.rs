@@ -28,6 +28,7 @@ pub enum Delivery {
     /// The output replaces the installed app's files, and the system keeps the
     /// manifest it read from the installed app. A patch that edits the manifest
     /// finishes unmountable: the run undoes it and leaves out the patches that need it.
+    /// A patch that rewrites the output is unmountable before it runs.
     Mount,
 }
 
@@ -39,6 +40,7 @@ impl Delivery {
 }
 
 pub(super) const CHANGES_MANIFEST: &str = "changes the manifest, which a mount does not apply";
+const REWRITES_OUTPUT: &str = "rewrites the written APK, which a mount cannot check";
 
 pub(super) fn unmountable_status() -> PatchStatus {
     PatchStatus::Unmountable {
@@ -129,7 +131,15 @@ impl ResolvedPlan {
                 } else {
                     spec.incompatibility(package, version)
                 };
-                reason.map(|reason| PatchStatus::Skipped { reason })
+                match reason {
+                    Some(reason) => Some(PatchStatus::Skipped { reason }),
+                    None if delivery == Delivery::Mount && spec.rewrites_output => {
+                        Some(PatchStatus::Unmountable {
+                            reason: REWRITES_OUTPUT.to_owned(),
+                        })
+                    }
+                    None => None,
+                }
             })
             .collect();
 

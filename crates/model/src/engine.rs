@@ -33,7 +33,8 @@ pub enum PatchStatus {
     Skipped {
         reason: String,
     },
-    /// Left out of a mount build because the patch changes the manifest; the run undid it.
+    /// Left out of a mount build because the patch changes the manifest, which the run
+    /// undid, or rewrites the written APK.
     Unmountable {
         reason: String,
     },

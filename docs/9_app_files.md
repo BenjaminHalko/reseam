@@ -35,7 +35,7 @@ manifest.edit {
 
 On a rooted phone, a build can be mounted over the app installed from the store instead of installed as its own app. The app keeps its signature, its data, and Google sign-in. Android keeps reading the manifest of the installed app, so a mount build leaves out every patch that edits the manifest, and the patches that depend on it. Code, resources, and other files apply as usual.
 
-Reach for code and resource changes where they do the job, so the patch works both ways. A patch whose purpose is the manifest, such as a package rename, is left out of mount builds.
+Reach for code and resource changes where they do the job, so the patch works both ways. A patch whose purpose is the manifest, such as a package rename, is left out of mount builds, and so is a patch that [rewrites the written APK](#after-the-apk-is-written).
 
 ## Resources
 
@@ -116,5 +116,34 @@ for (name in manifest.components()) {
 ```
 
 A package name or version change has to reach every split, or Android won't install the set.
+
+## After the APK is written
+
+Some work needs the finished APK file rather than its parts, such as handing it to a tool that takes an APK. `afterWrite { }` runs once every patch has executed and the engine has written the APK, before it signs it:
+
+```kotlin
+val packApp = patch("Pack app") {
+    compatibleWith(EXAMPLE_APP)
+
+    afterWrite {
+        val packed = tempFile("base.apk")
+        pack(output.file, packed, config = bundleFile("resources/packer.json"))
+        output.replace(packed)
+    }
+}
+```
+
+`pack` stands for your own code, or a library your patch module depends on.
+
+| | |
+|---|---|
+| `output.file` | the base APK as written, unsigned |
+| `output.component(name)` | a split, by the names `files.components()` lists |
+| `output.replace(file)` | moves `file` over the APK; the engine signs whatever is in place at the end |
+| `bundleFile(path)` | a file from your bundle, at the path `files.copy` takes |
+| `tempFile(name)` | a new path the engine deletes after the run, on the same disk as the output |
+| `options`, `log` | as in `execute` |
+
+`manifest`, `resources`, `bytecode`, and targets are not available here: the engine has already written them out. Patches with `afterWrite` run in dependency order, each on the files the one before it left. A patch that fails here fails the whole run, since the output is already written. Mount builds leave these patches out, and the browser patcher can't run them.
 
 Next: [Reading obfuscated objects](10_bindings.md).

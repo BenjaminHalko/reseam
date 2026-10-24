@@ -3,20 +3,20 @@
 
 use boltffi::export;
 
-use super::handles::{record_failure, with_ctx};
+use super::handles::{record_failure, with_patch};
 use crate::error::Result;
 use crate::options::{OptionValue, PatchOptions};
 
 fn option<R>(key: &str, f: impl FnOnce(&OptionValue) -> Option<R>) -> Option<R> {
-    with_ctx(|ctx| f(ctx.options().get(key)?))
+    with_patch(|_, options| f(options.get(key)?))
 }
 
 fn file_option<R>(key: &str, f: impl FnOnce(&PatchOptions) -> Result<Option<R>>) -> Option<R> {
-    with_ctx(|ctx| match f(ctx.options()) {
+    with_patch(|log, options| match f(options) {
         Ok(value) => value,
         Err(error) => {
             record_failure(&error);
-            ctx.log().warn(format!("option '{key}': {error}"));
+            log.warn(format!("option '{key}': {error}"));
             None
         }
     })

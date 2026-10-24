@@ -6,11 +6,12 @@ use std::sync::Arc;
 use jni::objects::{Global, JClass, JObject, JValue};
 use jni::{Env, jni_sig, jni_str};
 
-use super::handles::ContextGuard;
+use super::handles::{ContextGuard, OutputGuard};
 use super::jvm::{self, jvm_err};
 use super::savepoints::SavepointAction;
 use crate::context::PatchContext;
 use crate::error::Result;
+use crate::output::OutputContext;
 use crate::patch::PatchPhase;
 use reseam_journal::Savepoint;
 
@@ -27,15 +28,45 @@ impl KotlinCallback {
         Self { object, loader }
     }
 
-    pub(super) fn invoke(&self, phase: PatchPhase, ctx: &mut PatchContext<'_>) -> Result<()> {
-        let method = match phase {
-            PatchPhase::Execute => "invokeExecute",
-            PatchPhase::Finalize => "invokeAfterDependents",
-        };
+    pub(super) fn invoke(&self, phase: PatchPhase<'_, '_>) -> Result<()> {
+        match phase {
+            PatchPhase::Execute(ctx) => self.invoke_with_context(ctx, "invokeExecute"),
+            PatchPhase::Finalize(ctx) => self.invoke_with_context(ctx, "invokeAfterDependents"),
+            PatchPhase::RewriteOutput(ctx) => self.invoke_with_output(ctx),
+        }
+    }
+
+    fn invoke_with_context(&self, ctx: &mut PatchContext<'_>, method: &str) -> Result<()> {
         let guard = ContextGuard::enter(ctx, self.loader.running())?;
         let outcome = jvm::get_or_init()?.attach_current_thread(|env| {
             jvm::with_frame(env, |env| {
                 call_with_runtime(env, self.object.as_ref(), self.loader.reference(), method)
+            })
+        });
+        let native = guard.finish();
+        outcome.and(native)
+    }
+
+    fn invoke_with_output(&self, ctx: &mut OutputContext<'_>) -> Result<()> {
+        let guard = OutputGuard::enter(ctx, self.loader.running())?;
+        let outcome = jvm::get_or_init()?.attach_current_thread(|env| {
+            jvm::with_frame(env, |env| {
+                let class = load_class(
+                    env,
+                    self.loader.reference(),
+                    "app.reseam.patch.OutputRuntime",
+                )?;
+                let class = JClass::cast_local(env, class)?;
+                let runtime = env
+                    .new_object(class, jni_sig!("()V"), &[])
+                    .map_err(|e| jvm_err(format!("construct OutputRuntime: {e}")))?;
+                call_phase(
+                    env,
+                    &runtime,
+                    "OutputRuntime",
+                    "invokeAfterWrite",
+                    self.object.as_ref(),
+                )
             })
         });
         let native = guard.finish();
@@ -67,15 +98,26 @@ fn call_with_runtime(
             &[JValue::Object(run.as_ref().as_ref())],
         )
         .map_err(|e| jvm_err(format!("construct PatchRuntime: {e}")))?;
+    call_phase(env, &runtime, "PatchRuntime", method, patch)
+}
+
+/// Calls `method` of `runtime`, an instance of `class`, with `patch`.
+fn call_phase(
+    env: &mut Env<'_>,
+    runtime: &JObject<'_>,
+    class: &str,
+    method: &str,
+    patch: &JObject<'_>,
+) -> Result<()> {
     let call = env.call_method(
-        &runtime,
+        runtime,
         jni::strings::JNIString::new(method),
         jni_sig!("(Lapp/reseam/patch/ReseamPatch;)V"),
         &[JValue::Object(patch)],
     );
     match (call, jvm::take_pending_exception(env)?) {
-        (_, Some(exception)) => Err(jvm_err(format!("{method}(PatchRuntime): {exception}"))),
-        (Err(e), None) => Err(jvm_err(format!("{method}(PatchRuntime): {e}"))),
+        (_, Some(exception)) => Err(jvm_err(format!("{method}({class}): {exception}"))),
+        (Err(e), None) => Err(jvm_err(format!("{method}({class}): {e}"))),
         (Ok(_), None) => Ok(()),
     }
 }
