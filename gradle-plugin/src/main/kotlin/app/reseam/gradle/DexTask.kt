@@ -4,7 +4,9 @@
 package app.reseam.gradle
 
 import java.io.File
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import javax.inject.Inject
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
@@ -61,7 +63,9 @@ internal abstract class DexTask @Inject constructor(private val exec: ExecOperat
         val outDir = output.get().asFile.also(::recreate)
         val files =
             sources.asFileTree.files.filter { it.extension == "class" } +
-                sources.files.filter { it.extension == "jar" }
+                sources.files
+                    .filter { it.extension == "jar" }
+                    .mapIndexed { index, jar -> classesOf(jar, File(temporaryDir, "$index.jar")) }
         val globalsDir = globals.orNull?.asFile?.also(::recreate)
         if (files.isEmpty() && allowEmpty.get()) return
         check(files.isNotEmpty()) { "nothing to dex in ${project.path}" }
@@ -88,6 +92,26 @@ internal abstract class DexTask @Inject constructor(private val exec: ExecOperat
             intermediate.listFiles().orEmpty().filter { it.extension == "dex" },
         )
     }
+}
+
+/**
+ * Copies the classes of [jar] to [copy]. d8 reads a jar's `.dex` entries as program input too, and
+ * refuses a jar with both, so a library that ships DEX files as resources would not dex.
+ */
+private fun classesOf(jar: File, copy: File): File {
+    ZipFile(jar).use { zip ->
+        ZipOutputStream(copy.outputStream()).use { out ->
+            zip.entries()
+                .asSequence()
+                .filter { !it.isDirectory && it.name.endsWith(".class") }
+                .forEach { entry ->
+                    out.putNextEntry(ZipEntry(entry.name))
+                    zip.getInputStream(entry).use { it.copyTo(out) }
+                    out.closeEntry()
+                }
+        }
+    }
+    return copy
 }
 
 internal fun File.classFiles(): Sequence<File> =
