@@ -15,10 +15,11 @@ impl AxmlDocument {
             .and_then(|attr| self.attribute_string(attr))
     }
 
-    pub fn version_code(&self) -> Option<u32> {
+    /// `android:versionCode`, a signed 32-bit integer like Android's `PackageInfo.versionCode`.
+    pub fn version_code(&self) -> Option<i32> {
         self.attribute(self.root()?, ATTR_VERSION_CODE)?
             .value
-            .as_int()
+            .as_signed_int()
     }
 
     pub fn version_name(&self) -> Option<Cow<'_, str>> {
@@ -46,10 +47,9 @@ impl AxmlDocument {
             .as_int()
     }
 
-    pub fn set_version_code(&mut self, code: u32) -> bool {
-        self.root().is_some_and(|root| {
-            self.set_attribute(root, ATTR_VERSION_CODE, ResValue::int(code as i32))
-        })
+    pub fn set_version_code(&mut self, code: i32) -> bool {
+        self.root()
+            .is_some_and(|root| self.set_attribute(root, ATTR_VERSION_CODE, ResValue::int(code)))
     }
 
     pub fn set_version_name(&mut self, name: &str) -> bool {

@@ -93,6 +93,11 @@ impl ResValue {
         }
     }
 
+    /// A decimal or hex integer as Android reads it, in two's complement.
+    pub fn as_signed_int(self) -> Option<i32> {
+        matches!(self.kind, Self::INT_DEC | Self::INT_HEX).then_some(self.data as i32)
+    }
+
     pub fn as_bool(self) -> Option<bool> {
         (self.kind == Self::INT_BOOLEAN).then_some(self.data != 0)
     }

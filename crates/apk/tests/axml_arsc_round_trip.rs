@@ -20,7 +20,7 @@ fn manifest_edits_survive_both_string_encodings() -> TestResult {
         let original = doc.serialize()?;
         doc = AxmlDocument::parse(&original)?;
         assert_eq!(doc.serialize()?, original);
-        assert!(doc.set_version_code(42));
+        assert!(doc.set_version_code(i32::MAX));
         assert!(doc.add_permission("android.permission.INTERNET"));
         for text in [
             String::new(),
@@ -32,7 +32,7 @@ fn manifest_edits_survive_both_string_encodings() -> TestResult {
             assert!(doc.set_version_name(&text));
             let decoded = AxmlDocument::parse(&doc.serialize()?)?;
             assert_eq!(decoded.version_name().as_deref(), Some(text.as_str()));
-            assert_eq!(decoded.version_code(), Some(42));
+            assert_eq!(decoded.version_code(), Some(i32::MAX));
             assert_eq!(decoded.package_name().as_deref(), Some("com.example.test"));
             let permission = decoded.find_element("uses-permission").expect("permission");
             assert_eq!(

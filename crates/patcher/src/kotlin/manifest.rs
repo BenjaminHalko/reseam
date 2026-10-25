@@ -43,7 +43,7 @@ pub fn manifest_package_name(component: Option<String>) -> Option<String> {
 }
 
 #[export]
-pub fn manifest_version_code(component: Option<String>) -> Option<u32> {
+pub fn manifest_version_code(component: Option<String>) -> Option<i32> {
     read(component, AxmlDocument::version_code).flatten()
 }
 
@@ -63,7 +63,7 @@ pub fn manifest_split_name(component: Option<String>) -> Option<String> {
 }
 
 #[export]
-pub fn manifest_set_version_code(component: Option<String>, code: u32) {
+pub fn manifest_set_version_code(component: Option<String>, code: i32) {
     edit(component, |m, _| {
         m.set_version_code(code)
             .then_some(())

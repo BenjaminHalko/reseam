@@ -18,7 +18,7 @@ pub struct ApkMetadata {
     #[boltffi::default(None)]
     pub version_name: Option<String>,
     #[boltffi::default(None)]
-    pub version_code: Option<u32>,
+    pub version_code: Option<i32>,
     /// The container format the input came from, when it was an APKM/XAPK file.
     #[boltffi::default(None)]
     pub bundle_kind: Option<ContainerFormat>,

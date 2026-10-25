@@ -349,13 +349,13 @@ public final class app/reseam/patch/ManifestScope {
 	public final fun getMinSdkVersion-0hXNFcg ()Lkotlin/UInt;
 	public final fun getPackageName ()Ljava/lang/String;
 	public final fun getSplitName ()Ljava/lang/String;
-	public final fun getVersionCode-0hXNFcg ()Lkotlin/UInt;
+	public final fun getVersionCode ()Ljava/lang/Integer;
 	public final fun getVersionName ()Ljava/lang/String;
 	public final fun setActivityConfigChanges (Ljava/lang/String;Ljava/lang/String;)V
 	public final fun setAttributeInt (Ljava/lang/String;Ljava/lang/String;I)V
 	public final fun setAttributeString (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 	public final fun setMinSdk-WZ4Q5Ns (I)V
-	public final fun setVersionCode-WZ4Q5Ns (I)V
+	public final fun setVersionCode (I)V
 	public final fun setVersionName (Ljava/lang/String;)V
 }
 
