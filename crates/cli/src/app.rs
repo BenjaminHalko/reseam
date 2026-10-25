@@ -112,6 +112,8 @@ pub struct InfoCommand {
 #[derive(Subcommand)]
 pub enum BundleCommands {
     Keygen(BundleKeygenCommand),
+    /// Print the public key of a signing key made by `keygen`.
+    Pubkey(BundlePubkeyCommand),
     Pack(BundlePackCommand),
     /// Validate a staging manifest and print its bundle metadata as JSON.
     Manifest {
@@ -124,6 +126,12 @@ pub enum BundleCommands {
 pub struct BundleKeygenCommand {
     #[arg(long)]
     pub out: PathBuf,
+}
+
+#[derive(Args)]
+pub struct BundlePubkeyCommand {
+    #[arg(long)]
+    pub key: PathBuf,
 }
 
 #[derive(Args)]

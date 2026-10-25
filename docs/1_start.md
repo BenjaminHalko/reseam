@@ -44,7 +44,7 @@ Every bundle is signed. Users trust your public key once, and Reseam refuses bun
 reseam bundle keygen --out ~/.reseam/bundle-signing.key
 ```
 
-It prints the public key. Keep the key file private and out of the repository; the build reads it from this path.
+It prints the public key; `reseam bundle pubkey --key <file>` prints it again later. Keep the key file private and out of the repository; the build reads it from this path.
 
 ## 3. Build
 

@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 use std::io::{Read, Write};
+use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
 use ed25519_dalek::{SecretKey, SigningKey};
@@ -12,7 +13,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use tracing::info;
 
 use super::create_parent;
-use crate::app::{BundleKeygenCommand, BundleListCommand, BundlePackCommand};
+use crate::app::{BundleKeygenCommand, BundleListCommand, BundlePackCommand, BundlePubkeyCommand};
 
 pub fn run_bundle_list(command: &BundleListCommand) -> Result<()> {
     let response = inspect(&InspectRequest {
@@ -154,7 +155,7 @@ pub fn run_bundle_keygen(command: &BundleKeygenCommand) -> Result<()> {
         .out
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or(std::path::Path::new("."));
+        .unwrap_or(Path::new("."));
     let mut staged = tempfile::NamedTempFile::new_in(parent)?;
     staged.write_all(&seed)?;
     staged
@@ -171,9 +172,25 @@ pub fn run_bundle_keygen(command: &BundleKeygenCommand) -> Result<()> {
     Ok(())
 }
 
+pub fn run_bundle_pubkey(command: &BundlePubkeyCommand) -> Result<()> {
+    println!(
+        "{}",
+        hex::encode(read_signing_key(&command.key)?.verifying_key().to_bytes())
+    );
+    Ok(())
+}
+
 pub fn run_bundle_pack(command: &BundlePackCommand) -> Result<()> {
-    let mut file = std::fs::File::open(&command.key)
-        .with_context(|| format!("read key {}", command.key.display()))?;
+    let key = read_signing_key(&command.key)?;
+    create_parent(&command.out)?;
+    reseam_patcher::bundle::pack(&command.dir, command.version.as_deref(), &key, &command.out)?;
+    info!(out = %command.out.display(), "bundle packed and signed");
+    Ok(())
+}
+
+fn read_signing_key(path: &Path) -> Result<SigningKey> {
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("read key {}", path.display()))?;
     let mut seed: SecretKey = [0; 32];
     file.read_exact(&mut seed)
         .context("signing key must be exactly 32 bytes")?;
@@ -181,13 +198,5 @@ pub fn run_bundle_pack(command: &BundlePackCommand) -> Result<()> {
         file.read(&mut [0])? == 0,
         "signing key must be exactly 32 bytes"
     );
-    create_parent(&command.out)?;
-    reseam_patcher::bundle::pack(
-        &command.dir,
-        command.version.as_deref(),
-        &SigningKey::from_bytes(&seed),
-        &command.out,
-    )?;
-    info!(out = %command.out.display(), "bundle packed and signed");
-    Ok(())
+    Ok(SigningKey::from_bytes(&seed))
 }

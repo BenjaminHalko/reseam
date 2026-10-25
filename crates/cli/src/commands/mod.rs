@@ -14,7 +14,7 @@ use reseam_sdk::TrustStore;
 
 use crate::app::TrustArgs;
 
-pub use bundle::{run_bundle_keygen, run_bundle_list, run_bundle_pack};
+pub use bundle::{run_bundle_keygen, run_bundle_list, run_bundle_pack, run_bundle_pubkey};
 pub use info::run_info;
 pub use patch::run_patch;
 pub use perf::{run_perf, run_perf_worker};
