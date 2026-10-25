@@ -60,7 +60,10 @@ fn finalization_orders_hooks_and_emits_one_terminal_result() {
             &PatchSelection::default(),
             Delivery::Install,
             Some("com.example"),
-            Some("2.0"),
+            ApkVersion {
+                name: Some("2.0"),
+                code: None,
+            },
         )
         .unwrap();
         let results = apply_patches(

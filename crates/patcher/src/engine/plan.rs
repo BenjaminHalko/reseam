@@ -8,7 +8,7 @@ use super::{PatchIndex, PatchStatus};
 use crate::context::PatchContext;
 use crate::error::{PatcherError, Result};
 use crate::options::PatchOptions;
-use crate::patch::PatchSpec;
+use crate::patch::{ApkVersion, PatchSpec};
 
 pub use reseam_model::PatchSelection;
 
@@ -77,7 +77,7 @@ impl ResolvedPlan {
         selection: &PatchSelection,
         delivery: Delivery,
         package: Option<&str>,
-        version: Option<&str>,
+        version: ApkVersion<'_>,
     ) -> Result<Self> {
         let index = PatchIndex::new(specs)?;
         let DependencyGraph {

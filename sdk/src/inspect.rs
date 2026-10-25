@@ -8,7 +8,7 @@ use crate::error::{HostError, Result, classify};
 use reseam_apk::reseam_dex::ParseOptions;
 use reseam_apk::{ApkFile, ContainerBundle, ContainerFormat};
 use reseam_patcher::bundle::{BundleArchive, PatchBundle};
-use reseam_patcher::{PatchPreset, PatchSpec};
+use reseam_patcher::{ApkVersion, PatchPreset, PatchSpec};
 
 use crate::error::Problem;
 use crate::trust::TrustStore;
@@ -303,8 +303,13 @@ fn patch_metadata(spec: &PatchSpec, apk: Option<&ApkMetadata>) -> PatchMetadata 
     let package = apk.and_then(|apk| apk.package_name.as_deref());
     PatchMetadata {
         spec: spec.clone(),
-        incompatibility: spec
-            .incompatibility(package, apk.and_then(|apk| apk.version_name.as_deref())),
+        incompatibility: spec.incompatibility(
+            package,
+            ApkVersion {
+                name: apk.and_then(|apk| apk.version_name.as_deref()),
+                code: apk.and_then(|apk| apk.version_code),
+            },
+        ),
         presets: [PatchPreset::Recommended, PatchPreset::All]
             .into_iter()
             .filter(|&preset| spec.in_preset(preset, package))

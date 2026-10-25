@@ -8,8 +8,24 @@ use serde::{Deserialize, Serialize};
 #[boltffi::data]
 pub struct CompatiblePackage {
     pub package: String,
-    /// Empty means every version.
+    /// Accepted version names. With `version_codes` also empty, every version.
     pub versions: Vec<String>,
+    /// Accepted version codes; an APK matches when its name or its code is listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub version_codes: Vec<i32>,
+}
+
+impl CompatiblePackage {
+    fn every_version(&self) -> bool {
+        self.versions.is_empty() && self.version_codes.is_empty()
+    }
+}
+
+/// The version an APK's manifest declares.
+#[derive(Debug, Clone, Copy)]
+pub struct ApkVersion<'a> {
+    pub name: Option<&'a str>,
+    pub code: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,32 +123,51 @@ impl PatchSpec {
         format!("{}/{}", self.bundle, self.id)
     }
 
-    pub fn incompatibility(&self, package: Option<&str>, version: Option<&str>) -> Option<String> {
+    pub fn incompatibility(
+        &self,
+        package: Option<&str>,
+        version: ApkVersion<'_>,
+    ) -> Option<String> {
         let entries = match self.package_compatibility(package) {
             Ok(Some(entries)) => entries,
             Ok(None) => return None,
             Err(reason) => return Some(reason.to_string()),
         };
-        if entries
+        let entries: Vec<&CompatiblePackage> = entries
             .iter()
             .filter(|entry| Some(entry.package.as_str()) == package)
-            .any(|entry| entry.versions.is_empty())
+            .collect();
+        if entries.iter().any(|entry| entry.every_version()) {
+            return None;
+        }
+        let names: Vec<&str> = entries
+            .iter()
+            .flat_map(|entry| entry.versions.iter().map(String::as_str))
+            .collect();
+        let codes: Vec<i32> = entries
+            .iter()
+            .flat_map(|entry| entry.version_codes.iter().copied())
+            .collect();
+        if version.name.is_some_and(|name| names.contains(&name))
+            || version.code.is_some_and(|code| codes.contains(&code))
         {
             return None;
         }
-        let allowed: Vec<&str> = entries
-            .iter()
-            .filter(|entry| Some(entry.package.as_str()) == package)
-            .flat_map(|entry| entry.versions.iter().map(String::as_str))
-            .collect();
-        match version {
-            Some(version) if allowed.contains(&version) => None,
-            Some(version) => Some(format!(
-                "expected one of [{}], got {version}",
-                allowed.join(", ")
-            )),
-            None => Some("APK has no version name".to_owned()),
+        let mut expected = Vec::new();
+        if !names.is_empty() {
+            expected.push(format!("version name [{}]", names.join(", ")));
         }
+        if !codes.is_empty() {
+            let codes: Vec<String> = codes.iter().map(i32::to_string).collect();
+            expected.push(format!("version code [{}]", codes.join(", ")));
+        }
+        let got = match (version.name, version.code) {
+            (Some(name), Some(code)) => format!("{name} ({code})"),
+            (Some(name), None) => name.to_owned(),
+            (None, Some(code)) => format!("version code {code}"),
+            (None, None) => "an APK with no version".to_owned(),
+        };
+        Some(format!("expected {}, got {got}", expected.join(" or ")))
     }
 
     /// Whether `preset` selects the patch for an app of `package`. Presets take
@@ -212,6 +247,7 @@ mod tests {
             [CompatiblePackage {
                 package: "com.example".to_owned(),
                 versions: versions.iter().map(|v| (*v).to_owned()).collect(),
+                version_codes: Vec::new(),
             }]
             .into_iter()
             .collect()
@@ -245,5 +281,42 @@ mod tests {
             presets(&spec(Compatibility::Universal, true, true), app),
             vec![]
         );
+    }
+
+    #[test]
+    fn pinned_versions_match_by_name_or_code() {
+        let pinned = |versions: &[&str], version_codes: &[i32]| {
+            spec(
+                [CompatiblePackage {
+                    package: "com.example".to_owned(),
+                    versions: versions.iter().map(|v| (*v).to_owned()).collect(),
+                    version_codes: version_codes.to_vec(),
+                }]
+                .into_iter()
+                .collect(),
+                true,
+                false,
+            )
+        };
+        let version = |name, code| ApkVersion { name, code };
+        let app = Some("com.example");
+        for (spec, version, compatible) in [
+            (pinned(&[], &[]), version(None, None), true),
+            (pinned(&["1.0"], &[]), version(Some("1.0"), Some(5)), true),
+            (pinned(&["1.0"], &[]), version(Some("2.0"), Some(5)), false),
+            (pinned(&[], &[5]), version(Some("2.0"), Some(5)), true),
+            (pinned(&[], &[5]), version(Some("2.0"), Some(6)), false),
+            (pinned(&[], &[5]), version(None, None), false),
+            (pinned(&["1.0"], &[5]), version(Some("1.0"), Some(6)), true),
+            (pinned(&["1.0"], &[5]), version(Some("2.0"), Some(5)), true),
+            (pinned(&["1.0"], &[5]), version(Some("2.0"), Some(6)), false),
+        ] {
+            assert_eq!(
+                spec.incompatibility(app, version).is_none(),
+                compatible,
+                "{:?} against {version:?}",
+                spec.compatibility
+            );
+        }
     }
 }

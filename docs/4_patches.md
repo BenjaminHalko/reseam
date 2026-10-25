@@ -29,9 +29,11 @@ The name is what users see; it doesn't have to be unique. Each patch also has an
 ```kotlin
 compatibleWith("com.example.app", "com.example.app.lite")
 compatibleWith("com.example.app"("2.14.0", "2.14.1"))
+compatibleWith("com.example.app"("2.14.0", 214001))
+compatibleWith(CompatiblePackage("com.example.app", versionCodes = listOf(214001, 214002)))
 ```
 
-A package on its own means every version. `"package"("version", ...)` limits the patch to those versions; on any other version it is skipped. Define the package once and reuse it: `val EXAMPLE_APP = "com.example.app"("2.14.0")`.
+A package on its own means every version. `"package"("version", ...)` limits the patch to those version names, `"package"("name", code)` to one version by its name or its `android:versionCode`, and `versionCodes` to those codes. An APK matches when its name or its code is listed in any entry for its package; on any other version the patch is skipped. Pin codes when builds share a version name. Define the package once and reuse it: `val EXAMPLE_APP = "com.example.app"("2.14.0")`.
 
 A patch without `compatibleWith` works on any app. Users have to pick it themselves; it is never selected by default.
 

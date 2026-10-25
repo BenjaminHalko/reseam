@@ -54,6 +54,7 @@ pub(super) fn read_patch(
         Ok(CompatiblePackage {
             package: string(env, entry, "getName")?,
             versions: strings(env, entry, "getVersions")?,
+            version_codes: version_codes(env, entry)?,
         })
     })?;
     let options_list = object(env, patch, "getOptions", "()Ljava/util/List;")?;
@@ -223,6 +224,15 @@ fn optional_strings(
         return Ok(None);
     }
     list_strings(env, &list, getter).map(Some)
+}
+
+fn version_codes(env: &mut Env<'_>, entry: &JObject<'_>) -> Result<Vec<i32>> {
+    let list = object(env, entry, "getVersionCodes", "()Ljava/util/List;")?;
+    map_list(env, &list, "getVersionCodes", |env, item| {
+        env.call_method(item, jni_str!("intValue"), jni_sig!("()I"), &[])
+            .and_then(JValueOwned::i)
+            .map_err(|error| jvm_err(format!("getVersionCodes element: {error}")))
+    })
 }
 
 fn strings(env: &mut Env<'_>, target: &JObject<'_>, getter: &str) -> Result<Vec<String>> {
