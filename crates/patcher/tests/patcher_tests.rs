@@ -16,7 +16,7 @@ use reseam_patcher::bundle::{BUNDLE_FORMAT_VERSION, BundleArchive, pack};
 use reseam_patcher::context::PatchContext;
 use reseam_patcher::engine::{self, PatchSelection, PatchStatus};
 use reseam_patcher::options::OptionValue;
-use reseam_patcher::{Patch, PatchPreset};
+use reseam_patcher::{ApkVersion, Patch, PatchPreset};
 
 macro_rules! dex {
     ($name:literal) => {
@@ -342,7 +342,7 @@ impl SelectionCase {
     }
 }
 
-const SELECTION_CASES: [SelectionCase; 7] = [
+const SELECTION_CASES: [SelectionCase; 9] = [
     SelectionCase::new(None, SelectionOutcome::NotRun("universalMarker")),
     SelectionCase::new(
         Some("universal-marker"),
@@ -352,6 +352,11 @@ const SELECTION_CASES: [SelectionCase; 7] = [
         Some("uses-internal"),
         SelectionOutcome::Applied(&["internalHelper", "usesInternal"]),
     ),
+    SelectionCase::new(
+        Some("installed-version-code"),
+        SelectionOutcome::Applied(&["installedVersionCode"]),
+    ),
+    SelectionCase::new(Some("other-version-code"), SelectionOutcome::Applied(&[])),
     SelectionCase::new(None, SelectionOutcome::NotRun("needsOtherBundle")),
     SelectionCase::new(Some("needs-other-bundle"), SelectionOutcome::MissingBundle),
     SelectionCase::new(Some("required-option"), SelectionOutcome::MissingOption),
@@ -963,7 +968,10 @@ fn apply(
         selection,
         engine::Delivery::Install,
         ctx.apk().package_name().as_deref(),
-        ctx.apk().version_name().as_deref(),
+        ApkVersion {
+            name: ctx.apk().version_name().as_deref(),
+            code: ctx.apk().version_code(),
+        },
     )?;
     engine::apply_patches(ctx, &specs, plan, patches, |_| {}).map(engine::AppliedRun::into_results)
 }

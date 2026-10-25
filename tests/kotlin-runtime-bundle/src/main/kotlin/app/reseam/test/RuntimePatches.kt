@@ -3,6 +3,7 @@
 
 package app.reseam.test
 
+import app.reseam.patch.CompatiblePackage
 import app.reseam.patch.ExtClass
 import app.reseam.patch.ExternalPatch
 import app.reseam.patch.ResourceValue
@@ -16,6 +17,7 @@ import app.reseam.patch.dex.AccessFlags
 import app.reseam.patch.dex.Opcode
 import app.reseam.patch.dex.opcode
 import app.reseam.patch.enumConstant
+import app.reseam.patch.invoke
 import app.reseam.patch.klass
 import app.reseam.patch.method
 import app.reseam.patch.methods
@@ -215,6 +217,20 @@ val otherBundleHelper = ExternalPatch("other-bundle", "app.reseam.other.helper")
 val needsOtherBundle =
     declaredFixture("needs-other-bundle") {
         dependsOn(otherBundleHelper)
+        execute {}
+    }
+
+val installedVersionCode =
+    patch("installed-version-code") {
+        compatibleWith("com.example.test"("9.9", 1))
+        enabledByDefault(false)
+        execute {}
+    }
+
+val otherVersionCode =
+    patch("other-version-code") {
+        compatibleWith(CompatiblePackage("com.example.test", versionCodes = listOf(2)))
+        enabledByDefault(false)
         execute {}
     }
 

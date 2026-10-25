@@ -7,7 +7,7 @@ export interface OptionDeclaration {
   key: string; title: string; description: string; option_type: OptionKind;
   default_value: OptionValue | null; valid_values: string[] | null; required: boolean;
 }
-export type Compatibility = { kind: 'universal' } | { kind: 'packages'; packages: { package: string; versions: string[] }[] };
+export type Compatibility = { kind: 'universal' } | { kind: 'packages'; packages: { package: string; versions: string[]; version_codes?: number[] }[] };
 export interface PatchMetadata {
   bundle: string; id: string; name: string; hidden: boolean; description: string; enabled_by_default: boolean;
   dependencies: string[]; options: OptionDeclaration[]; incompatibility: string | null; presets: Preset[];

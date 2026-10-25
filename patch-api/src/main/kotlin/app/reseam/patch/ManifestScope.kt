@@ -31,7 +31,8 @@ class ManifestScope internal constructor(private val componentName: String? = nu
     val packageName: String?
         get() = manifestPackageName(componentName)
 
-    val versionCode: UInt?
+    /** `android:versionCode`, a signed 32-bit integer as Android reads it. */
+    val versionCode: Int?
         get() = manifestVersionCode(componentName)
 
     val versionName: String?
@@ -59,7 +60,7 @@ class ManifestScope internal constructor(private val componentName: String? = nu
             }
         }
 
-    fun setVersionCode(code: UInt) = manifestSetVersionCode(componentName, code)
+    fun setVersionCode(code: Int) = manifestSetVersionCode(componentName, code)
 
     fun setVersionName(name: String) = manifestSetVersionName(componentName, name)
 

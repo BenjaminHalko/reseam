@@ -94,7 +94,7 @@ impl ApkFile {
         self.base().manifest().package_name()
     }
 
-    pub fn version_code(&self) -> Option<u32> {
+    pub fn version_code(&self) -> Option<i32> {
         self.base().manifest().version_code()
     }
 

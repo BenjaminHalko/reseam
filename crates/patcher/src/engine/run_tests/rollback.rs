@@ -50,7 +50,10 @@ fn run_patches(delivery: Delivery, patches: &[&Patch], runs: &Arc<Mutex<Vec<Stri
         &PatchSelection::default(),
         delivery,
         Some("com.example"),
-        Some("2.0"),
+        ApkVersion {
+            name: Some("2.0"),
+            code: None,
+        },
     )
     .unwrap();
     let mut reverted = Vec::new();

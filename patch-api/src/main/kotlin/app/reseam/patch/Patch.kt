@@ -65,13 +65,24 @@ interface ReseamPatch {
         get() = false
 }
 
-data class CompatiblePackage(
+/**
+ * A package the patch applies to. An APK matches when its version name is in [versions] or its
+ * version code is in [versionCodes]; with both empty, every version matches.
+ */
+data class CompatiblePackage
+@JvmOverloads
+constructor(
     val name: String,
-    /** Empty means every version. */
     val versions: List<String> = emptyList(),
+    /** `android:versionCode` values. */
+    val versionCodes: List<Int> = emptyList(),
 )
 
 operator fun String.invoke(vararg versions: String) = CompatiblePackage(this, versions.toList())
+
+/** A version known by its name and code; an APK matches when either one does. */
+operator fun String.invoke(versionName: String, versionCode: Int) =
+    CompatiblePackage(this, listOf(versionName), listOf(versionCode))
 
 /**
  * A patch in another bundle, for `dependsOn`. The Gradle plugin generates one per patch of every

@@ -104,10 +104,21 @@ fn print_patch(index: usize, patch: &PatchMetadata, hidden: &HashSet<String>) {
             let packages: Vec<String> = packages
                 .iter()
                 .map(|entry| {
-                    if entry.versions.is_empty() {
+                    let versions: Vec<String> = entry
+                        .versions
+                        .iter()
+                        .cloned()
+                        .chain(
+                            entry
+                                .version_codes
+                                .iter()
+                                .map(|code| format!("code {code}")),
+                        )
+                        .collect();
+                    if versions.is_empty() {
                         entry.package.clone()
                     } else {
-                        format!("{} ({})", entry.package, entry.versions.join(", "))
+                        format!("{} ({})", entry.package, versions.join(", "))
                     }
                 })
                 .collect();

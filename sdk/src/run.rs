@@ -6,7 +6,7 @@ use reseam_apk::ApkFile;
 use reseam_patcher::bundle::PatchBundle;
 use reseam_patcher::context::{ExtensionSet, PatchContext};
 use reseam_patcher::engine::{self, AppliedRun, Delivery, PatchResult, PatchStatus, ResolvedPlan};
-use reseam_patcher::{Patch, PatchSpec};
+use reseam_patcher::{ApkVersion, Patch, PatchSpec};
 
 use crate::TrustStore;
 use crate::error::Problem;
@@ -99,7 +99,11 @@ fn run(
         )?,
     };
     let package = opened.apk.package_name().map(Cow::into_owned);
-    let version = opened.apk.version_name().map(Cow::into_owned);
+    let version_name = opened.apk.version_name().map(Cow::into_owned);
+    let version = ApkVersion {
+        name: version_name.as_deref(),
+        code: opened.apk.version_code(),
+    };
     let specs: Vec<&PatchSpec> = archives.iter().flat_map(TrustedArchive::catalog).collect();
     let selection = resolve(&specs, package.as_deref())?;
     let plan = ResolvedPlan::resolve(
@@ -107,7 +111,7 @@ fn run(
         &selection,
         delivery(request.install_method),
         package.as_deref(),
-        version.as_deref(),
+        version,
     )?;
 
     if request.dry_run {

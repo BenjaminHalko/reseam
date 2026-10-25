@@ -4,7 +4,7 @@
 use super::*;
 use crate::engine::{Delivery, PatchSelection};
 use crate::error::PatcherError;
-use crate::patch::{Compatibility, CompatiblePackage, PatchPreset, PatchSpec};
+use crate::patch::{ApkVersion, Compatibility, CompatiblePackage, PatchPreset, PatchSpec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Status {
@@ -39,6 +39,7 @@ fn declared(bundle: &str, id: &str, dependencies: &[&str]) -> PatchSpec {
         compatibility: [CompatiblePackage {
             package: "com.example".into(),
             versions: Vec::new(),
+            version_codes: Vec::new(),
         }]
         .into_iter()
         .collect(),
@@ -53,6 +54,10 @@ fn validate(
     package: Option<&str>,
     version: Option<&str>,
 ) -> Result<Vec<PatchResult>> {
+    let version = ApkVersion {
+        name: version,
+        code: None,
+    };
     let plan = ResolvedPlan::resolve(specs, selection, Delivery::Install, package, version)?;
     Ok(validate_patches(specs, &plan))
 }
@@ -84,6 +89,7 @@ fn selection_presets_and_compatibility() {
     pinned.compatibility = [CompatiblePackage {
         package: "com.example".into(),
         versions: vec!["1.0".into()],
+        version_codes: Vec::new(),
     }]
     .into_iter()
     .collect();
@@ -188,6 +194,7 @@ fn dependency_selection_stops_at_unavailable_or_incompatible_nodes() {
     middle.compatibility = [CompatiblePackage {
         package: "com.other".into(),
         versions: Vec::new(),
+        version_codes: Vec::new(),
     }]
     .into_iter()
     .collect();
