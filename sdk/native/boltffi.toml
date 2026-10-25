@@ -20,3 +20,8 @@ desktop_loader = "bundled"
 
 [targets.android.pack]
 output = "../jniLibs"
+
+# AGP strips app libraries only when the app's build has its default NDK installed,
+# so the SDK ships them stripped instead of relying on every consumer's toolchain.
+[targets.android.link]
+extra_args = ["-Wl,--strip-all"]
