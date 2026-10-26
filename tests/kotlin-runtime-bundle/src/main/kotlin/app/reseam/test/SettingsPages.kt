@@ -5,9 +5,12 @@ package app.reseam.test
 
 import app.reseam.patch.appEntry
 import app.reseam.patch.patch
+import app.reseam.patch.settings.About
+import app.reseam.patch.settings.Link
 import app.reseam.patch.settings.SettingsGroup
 import app.reseam.patch.settings.SettingsPage
 import app.reseam.patch.settings.Vector
+import app.reseam.patch.settings.Verbatim
 import app.reseam.patch.settings.section
 import app.reseam.patch.settings.settingsHost
 import app.reseam.patch.settings.text
@@ -46,6 +49,12 @@ object NavigationSettings : SettingsGroup(TestStrings) {
 val navigationSettings =
     settingsHost("navigation") {
         compatibleWith("com.example.test")
+        about(
+            About(
+                links = listOf(Link(Verbatim("Forum"), "https://example.com/forum", chevron)),
+                actions = listOf(Link(TestStrings.pageMedia, "https://example.com/donate", dot)),
+            )
+        )
         settings(
             section(
                 TestStrings.sectionRoot,

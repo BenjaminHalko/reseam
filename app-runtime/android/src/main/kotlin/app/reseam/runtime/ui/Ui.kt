@@ -12,6 +12,7 @@ import android.os.Build
 import android.view.Gravity
 import android.view.View
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
@@ -94,6 +95,37 @@ class Ui(@JvmField val context: Context, @JvmField val theme: Theme) {
             setPadding(horizontal, 0, horizontal, 0)
             val radius = Tokens.BUTTON / 2f
             background = ripple(null, radius, radius, colors.primary)
+            setOnClickListener(onClick)
+            isFocusable = true
+        }
+
+    /** A filled button in the secondary container color. */
+    fun tonalButton(
+        label: CharSequence?,
+        image: VectorImage,
+        onClick: View.OnClickListener?,
+    ): View =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            minimumHeight = px(Tokens.BUTTON)
+            val horizontal = px(Tokens.SPACE_MD)
+            setPadding(horizontal, 0, horizontal, 0)
+            val radius = Tokens.BUTTON / 2f
+            background =
+                ripple(
+                    shape(colors.secondaryContainer, radius),
+                    radius,
+                    radius,
+                    colors.onSecondaryContainer,
+                )
+            addView(
+                icon(image, Tokens.ICON_SM, colors.onSecondaryContainer),
+                LinearLayout.LayoutParams(px(Tokens.ICON_SM), px(Tokens.ICON_SM)).apply {
+                    marginEnd = px(Tokens.SPACE_SM)
+                },
+            )
+            addView(text(label, type.labelLarge, colors.onSecondaryContainer))
             setOnClickListener(onClick)
             isFocusable = true
         }

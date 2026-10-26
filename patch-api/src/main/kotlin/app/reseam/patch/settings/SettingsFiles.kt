@@ -13,6 +13,7 @@ import app.reseam.patch.types.RunningBundleInfo
 internal class SettingsFiles(
     private val bundle: RunningBundleInfo,
     private val brand: Brand,
+    private val about: About?,
     contributions: List<SettingsSection>,
     private val extraTables: List<StringTable>,
 ) {
@@ -32,7 +33,9 @@ internal class SettingsFiles(
         val pages =
             sections.mapNotNull { it.page }.flatMap { generateSequence(it, SettingsPage::parent) }
         val settings = sections.flatMap { it.settings }
+        val links = about?.let { it.links + it.actions }.orEmpty()
         return sections.map { it.title } +
+            links.map { it.label }.filterIsInstance<StringRef>() +
             pages.flatMap { listOfNotNull(it.title, it.summary) } +
             settings.flatMap { listOfNotNull(it.title, it.summary) } +
             settings.filterIsInstance<ChoiceSetting>().flatMap { setting ->
@@ -80,6 +83,15 @@ internal class SettingsFiles(
                 field("engine", bundle.engine)
                 field("license", bundle.license.ifEmpty { null })
                 field("brand") { brand(brand, brand.font?.let { FONT }) }
+                field("about") {
+                    val about = about
+                    if (about == null) nothing()
+                    else
+                        obj {
+                            field("links") { array(about.links) { link(it) } }
+                            field("actions") { array(about.actions) { link(it) } }
+                        }
+                }
                 field("pages") {
                     array(pages.values.sortedBy { it.order }) { page ->
                         obj {
@@ -140,6 +152,12 @@ internal class SettingsFiles(
                 }
             }
         }
+    }
+
+    private fun Json.link(link: Link) = obj {
+        field("label") { text(link.label) }
+        field("url", link.url)
+        field("icon") { vector(link.icon) }
     }
 
     private fun Json.text(text: DisplayText?) =

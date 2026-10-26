@@ -903,6 +903,10 @@ fn same_named_patches_keep_independent_identity_options_dependencies_and_setting
     assert_eq!(sections.len(), 2);
     assert_eq!(sections[0]["title"]["name"], "section_first");
     assert_eq!(sections[1]["title"]["name"], "section_second");
+    assert!(
+        schema["about"].is_null(),
+        "a host without about leaves the card bare"
+    );
 }
 
 fn apply_fixture(apk: &mut ApkFile, name: &str, id: &str) {
@@ -1890,6 +1894,15 @@ fn settings_schemas_carry_the_bundle_license_and_normalized_svg_icons() {
     let schema: serde_json::Value =
         serde_json::from_slice(&entry(&mut apk, 0, SETTINGS_SCHEMA).unwrap()).unwrap();
     assert_eq!(schema["license"], "GPL-3.0");
+    let about = &schema["about"];
+    assert_eq!(about["links"][0]["label"]["text"], "Forum");
+    assert_eq!(about["links"][0]["url"], "https://example.com/forum");
+    assert_eq!(
+        about["links"][0]["icon"]["paths"][0]["data"],
+        "M 9 18 L 15 12 L 9 6"
+    );
+    assert_eq!(about["actions"][0]["label"]["name"], "page_media");
+    assert_eq!(about["actions"][0]["url"], "https://example.com/donate");
     let media = schema["pages"]
         .as_array()
         .unwrap()

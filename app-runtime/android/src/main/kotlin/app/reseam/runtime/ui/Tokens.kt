@@ -17,12 +17,13 @@ object Tokens {
     const val RADIUS_LG = 16
     const val RADIUS_XL = 28
     const val TOUCH_TARGET = 48
+    const val ICON_SM = 18
     const val ICON_MD = 24
     const val BUTTON = 40
     const val TOP_BAR = 64
     const val SEARCH_BAR = 56
     const val LIST_ITEM = 64
-    const val LOGO = 80
+    const val LOGO = 40
     const val DIALOG_MIN_WIDTH = 280
     const val DIALOG_MAX_WIDTH = 560
     const val DISABLED = 0.38f

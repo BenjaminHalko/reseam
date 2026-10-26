@@ -23,6 +23,7 @@ internal constructor(
     private val ownSections: List<SettingsSection>,
     private val strings: List<StringTable>,
     private val brand: Brand,
+    private val about: About?,
     private val install: PatchRuntime.() -> Unit,
 ) : ReseamPatch {
     override val name: String? = null
@@ -44,7 +45,8 @@ internal constructor(
     override fun afterDependents(ctx: PatchRuntime) {
         try {
             ctx.run.claimSettings(ctx.bundle.name, this)
-            SettingsFiles(ctx.bundle, brand, ctx.run.sections(this), strings).write(ctx.files)
+            SettingsFiles(ctx.bundle, brand, about, ctx.run.sections(this), strings)
+                .write(ctx.files)
             ctx.install()
             // appEntry code runs newest first, so this init precedes every other entry hook.
             appEntry { call(Reseam.init, application) }
@@ -61,6 +63,7 @@ class SettingsHostBuilder internal constructor() : PatchDeclaration() {
     private val sections = mutableListOf<SettingsSection>()
     private val strings = mutableListOf<StringTable>()
     private var brand = Brand.DEFAULT
+    private var about: About? = null
 
     /** Sections the host owns, for settings that belong to no single feature patch. */
     fun settings(vararg sections: SettingsSection) {
@@ -75,6 +78,11 @@ class SettingsHostBuilder internal constructor() : PatchDeclaration() {
     /** How the settings screen and the components the bundle's extensions build look. */
     fun brand(brand: Brand) {
         this.brand = brand
+    }
+
+    /** Links on the settings screen's about card. */
+    fun about(about: About) {
+        this.about = about
     }
 
     /**
@@ -93,6 +101,7 @@ class SettingsHostBuilder internal constructor() : PatchDeclaration() {
             sections.toList(),
             strings.toList(),
             brand,
+            about,
             installBlock,
         )
 }

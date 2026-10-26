@@ -12,6 +12,7 @@ internal class SettingsSchema(json: JSONObject) {
     val version: String? = json.getJSONObject("bundle").optionalString("version")
     val engine: String = json.getString("engine")
     val license: String? = json.optionalString("license")
+    val about: About? = json.optJSONObject("about")?.let(::About)
     val pages = json.getJSONArray("pages").objects().map(::Page)
     val sections = json.getJSONArray("sections").objects().map(::Section)
     val settings = sections.flatMap { it.settings }.distinctBy { it.key }
@@ -38,6 +39,17 @@ internal class SettingsSchema(json: JSONObject) {
         val summary: DisplayText? = json.optionalText("summary")
         val icon: VectorImage? = VectorImage.read(json.optJSONObject("icon"))
         val parent: String = json.optionalString("parent") ?: ""
+    }
+
+    class About(json: JSONObject) {
+        val links = json.getJSONArray("links").objects().map(::Link)
+        val actions = json.getJSONArray("actions").objects().map(::Link)
+    }
+
+    class Link(json: JSONObject) {
+        val label: DisplayText = json.text("label")
+        val url: String = json.getString("url")
+        val icon: VectorImage = checkNotNull(VectorImage.read(json.getJSONObject("icon")))
     }
 
     class Section(json: JSONObject) {

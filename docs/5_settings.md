@@ -99,6 +99,17 @@ val appSettings = settingsHost("example") {
 
 The screen opens with an about card: your brand's logo and name, your bundle's version, the engine version, and the `license` in your [`manifest.toml`](13_bundles.md#manifesttoml).
 
+`about(About(links, actions))` adds where people reach you: `links` become a row of icon buttons under the name, and `actions` become buttons below it. Each `Link` has a label, an `https://` address, and an icon. An icon button shows no label, so screen readers read it aloud. A host without `about` shows the name and versions only.
+
+```kotlin
+about(
+    About(
+        links = listOf(Link(Verbatim("Discord"), "https://example.com/discord", discordIcon)),
+        actions = listOf(Link(ExampleStrings.donate, "https://example.com/donate", heartIcon)),
+    )
+)
+```
+
 It ends with Export settings and Import settings. An export is a JSON file with the bundle name and the value the user set for every toggle, text, and choice setting. Folder settings stay out, since the folder permission belongs to the install. Import applies the values that match a setting on the screen and leaves the rest as they are, so a file from another app of your bundle changes only the settings both share.
 
 ## Brand

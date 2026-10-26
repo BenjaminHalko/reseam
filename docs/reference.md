@@ -223,13 +223,14 @@ Resource file and value helpers:
 | `SettingsPage(id, title: StringRef, parent = null, order = 0, summary: StringRef? = null, icon = null)` | A settings page, shown as a row on its parent; `parent` nests it, `order` sorts siblings. Only populated pages and their parents appear. |
 | `section(title, vararg settings)` | A root `SettingsSection`. |
 | `section(page, title, vararg settings)` | A section on a page; sections with the same page and title merge. |
-| `settingsHost(appId) { }` | An internal patch giving the app the running bundle's settings screen: `compatibleWith`, `dependsOn`, `settings(vararg sections)` for the host's own sections, `strings(vararg tables)` for tables extensions read beyond those the settings use, `brand(Brand)`, `install { PatchRuntime }`. It writes `assets/reseam/<bundle>/` (settings, brand font, string tables) and the app runtime's strings, and starts the app runtime first in the `Application`'s `onCreate`. One host per bundle and app. |
+| `settingsHost(appId) { }` | An internal patch giving the app the running bundle's settings screen: `compatibleWith`, `dependsOn`, `settings(vararg sections)` for the host's own sections, `strings(vararg tables)` for tables extensions read beyond those the settings use, `brand(Brand)`, `about(About)`, `install { PatchRuntime }`. It writes `assets/reseam/<bundle>/` (settings, brand font, string tables) and the app runtime's strings, and starts the app runtime first in the `Application`'s `onCreate`. One host per bundle and app. |
 | `SettingsHost` | A `ReseamPatch` with `appId`; `register(patch, sections)` collects contributions. `PatchBuilder.settings` registers them during execution. |
 | `CodeScope.openSettings()` | Opens the running bundle's settings over the app's current screen. |
 | `XmlElement.opensSettings()` | Makes an `<intent>` element open the running bundle's settings through `Reseam.startActivity`. |
 | `Reseam` | The app runtime's entry `ExtClass`: `startActivity(Context, Intent)` opens settings for an intent `opensSettings` set up, and starts any other intent. |
 | `CodeScope.addReactPackage(packages)` | Adds the React Native package Hermes gates read settings through to the app's package list, once however many bundles call it. |
 | `Brand(name, light, dark, logo = null, font = null, typography = Typography())` | How the settings screen and branded components look. `Brand.DEFAULT` is Material 3's baseline in the system font. |
+| `About(links = emptyList(), actions = emptyList())`, `Link(label, url, icon)` | Where people reach the bundle's publisher, on the settings screen's about card: links as icon buttons, actions as buttons. A link opens an `https://` page. |
 | `ColorScheme(...)` | The Material 3 roles the app runtime paints with, from `primary` to `scrim`. |
 | `Color.hex(value)` | `#rgb`, `#rrggbb`, or `#aarrggbb`. |
 | `Typography(headlineSmall, titleLarge, titleMedium, bodyLarge, bodyMedium, labelLarge, labelMedium)` | Type roles, defaulting to Material 3's; each a `TextStyle(size, lineHeight, weight, tracking = 0)` in sp. |
