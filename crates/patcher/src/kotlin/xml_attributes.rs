@@ -16,18 +16,26 @@ fn split_name<'a>(document: &AxmlDocument, name: &'a str) -> (Option<u32>, &'a s
         })
 }
 
+pub(super) fn find_attribute<'a>(
+    document: &AxmlDocument,
+    attributes: &'a [AxmlAttribute],
+    name: &str,
+) -> Option<&'a AxmlAttribute> {
+    let (namespace, local) = split_name(document, name);
+    if name.contains(':') && namespace.is_none() {
+        return None;
+    }
+    attributes
+        .iter()
+        .find(|attribute| document.is_attribute(attribute, namespace, local))
+}
+
 pub(super) fn attribute_text(
     document: &AxmlDocument,
     attributes: &[AxmlAttribute],
     name: &str,
 ) -> Option<String> {
-    let (namespace, local) = split_name(document, name);
-    if name.contains(':') && namespace.is_none() {
-        return None;
-    }
-    let attribute = attributes
-        .iter()
-        .find(|attribute| document.is_attribute(attribute, namespace, local))?;
+    let attribute = find_attribute(document, attributes, name)?;
     Some(match attribute.value.kind {
         ResValue::STRING => document.attribute_string(attribute)?.into_owned(),
         ResValue::INT_DEC => (attribute.value.data as i32).to_string(),

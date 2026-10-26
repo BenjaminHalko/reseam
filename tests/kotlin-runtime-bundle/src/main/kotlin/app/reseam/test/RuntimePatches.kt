@@ -17,6 +17,7 @@ import app.reseam.patch.dex.AccessFlags
 import app.reseam.patch.dex.Opcode
 import app.reseam.patch.dex.opcode
 import app.reseam.patch.enumConstant
+import app.reseam.patch.field
 import app.reseam.patch.invoke
 import app.reseam.patch.klass
 import app.reseam.patch.method
@@ -156,12 +157,16 @@ val afterEntryValues =
 
 val embeddedStrings =
     fixturePatch("embedded-strings") {
-        val changed =
+        val contained =
             bytecode.replaceStringsContaining("com.google.android.gsf") { old ->
                 old.takeIf { it.startsWith("content://") }
                     ?.replace("com.google.android.gsf", "app.reseam.gsf")
             }
-        files.write("assets/embedded-strings.txt", changed.toString().encodeToByteArray())
+        val prefixed =
+            bytecode.replaceStringsStartingWith("com.google.android.gsf.") { old ->
+                old.replace(".action.", ".intent.")
+            }
+        files.write("assets/embedded-strings.txt", "$contained|$prefixed".encodeToByteArray())
     }
 
 object DuplicateSettings : SettingsGroup(TestStrings) {
@@ -755,6 +760,38 @@ val enumConstants =
             "assets/enum-constants.txt",
             "${planEnum.descriptor}|${premium.name}|${planEnum.enumConstant("FAMILY").name}"
                 .encodeToByteArray(),
+        )
+    }
+
+val fieldAccesses =
+    fixturePatch("field-accesses") {
+        val premium = planEnum.enumConstant("PREMIUM")
+        val readers = methods {
+            accesses {
+                owner(planEnum.descriptor)
+                name(premium.name)
+            }
+        }
+            .all
+            .map { "${it.owner}.${it.name}" }
+            .sorted()
+        val read = klass("com.example.Account").method("plan").field { owner(planEnum.descriptor) }
+        files.write(
+            "assets/field-accesses.txt",
+            (readers + "${read.owner}.${read.name}").joinToString("|").encodeToByteArray(),
+        )
+    }
+
+val xmlFilesWith =
+    fixturePatch("xml-files-with") {
+        val found =
+            listOf(
+                files.xmlFilesWith("android:layout_width"),
+                files.xmlFilesWith("android:targetPackage", "app:missing"),
+            )
+        files.write(
+            "assets/xml-files-with.txt",
+            found.joinToString("|") { it.joinToString(",") }.encodeToByteArray(),
         )
     }
 

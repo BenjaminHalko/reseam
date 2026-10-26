@@ -278,18 +278,18 @@ impl ResourceTable {
     /// Returns `None` for an absent or non-string value. Malformed entries
     /// and invalid string pool indices are errors.
     pub fn string_value(&self, name: &str) -> Result<Option<Cow<'_, str>>> {
-        let Some(value) = self.resource_value("string", name)? else {
-            return Ok(None);
-        };
-        let Some(index) = value.string_index() else {
-            return Ok(None);
-        };
-        self.get_string(index)?.map(Some).ok_or_else(|| {
-            invalid(
-                "res string",
-                format!("string/{name} has invalid pool index {index}"),
-            )
-        })
+        match self.find_resource_id("string", name)? {
+            Some(res_id) => self.string_value_by_id(res_id),
+            None => Ok(None),
+        }
+    }
+
+    /// [`Self::string_value`] by resource id.
+    pub fn string_value_by_id(&self, res_id: u32) -> Result<Option<Cow<'_, str>>> {
+        match self.pool_index(res_id)? {
+            Some(index) => self.get_string(index),
+            None => Ok(None),
+        }
     }
 
     /// Rewrite the global pool value referenced by `string/name`.
@@ -298,22 +298,35 @@ impl ResourceTable {
     /// Malformed entries and invalid pool indices are errors. Other resources
     /// sharing the same pool index also see the new text.
     pub fn set_string_value(&mut self, name: &str, value: &str) -> Result<bool> {
-        let index = self
-            .resource_value("string", name)?
-            .and_then(ResValue::string_index);
-        match index {
-            Some(index) => {
-                if self.get_string(index)?.is_none() {
-                    return Err(invalid(
-                        "res string",
-                        format!("string/{name} has invalid pool index {index}"),
-                    ));
-                }
-                self.set_string(index, value.to_string())?;
-                Ok(true)
-            }
+        match self.find_resource_id("string", name)? {
+            Some(res_id) => self.set_string_value_by_id(res_id, value),
             None => Ok(false),
         }
+    }
+
+    /// [`Self::set_string_value`] by resource id.
+    pub fn set_string_value_by_id(&mut self, res_id: u32, value: &str) -> Result<bool> {
+        let Some(index) = self.pool_index(res_id)? else {
+            return Ok(false);
+        };
+        self.set_string(index, value.to_string())?;
+        Ok(true)
+    }
+
+    fn pool_index(&self, res_id: u32) -> Result<Option<u32>> {
+        let Some((_, value)) = self.values(res_id).next().transpose()? else {
+            return Ok(None);
+        };
+        let Some(index) = value.string_index() else {
+            return Ok(None);
+        };
+        if self.get_string(index)?.is_none() {
+            return Err(invalid(
+                "res string",
+                format!("resource {res_id:#010x} has invalid pool index {index}"),
+            ));
+        }
+        Ok(Some(index))
     }
 
     /// The path each configuration of `type_name/entry_name` points at, the

@@ -30,6 +30,7 @@ The constraints you will use most:
 | `inClass(classTarget)` | are declared in this class |
 | `calls(target)`, `calls { name("create") }` | call this method |
 | `calledBy(target)` | are called by this method |
+| `accesses { owner(prefs.descriptor) }` | read or write a matching field |
 | `flags(AccessFlags.STATIC)` | have these access flags |
 | `opcodeSequence(...)` | contain these instructions back to back |
 | `custom { instructionCount < 10 }` | pass your own check |

@@ -4,6 +4,7 @@
 use super::fixtures::*;
 use reseam_apk::resources::{AttrFormats, EntryValue, MapEntry, ResPackage, ResourceTable};
 use reseam_apk::{ResValue, ResourceScope, StringEncoding};
+use std::borrow::Cow;
 
 type Read = Box<dyn Fn(&ResourceTable) -> reseam_apk::Result<Readback>>;
 type Edit = Box<dyn Fn(&mut ResourceTable) -> reseam_apk::Result<()>>;
@@ -95,15 +96,24 @@ fn index_cases() -> Vec<Case> {
                 edit: Box::new(move |table| {
                     let replacement = table.add_global_string("Changed");
                     table.replace_entry_string(hello | 2, replacement)?;
+                    table.set_string_value_by_id(hello, "Greeting")?;
                     table.add_string_resource("added", "Added")?;
                     Ok(())
                 }),
-                read: Box::new(|table| {
+                read: Box::new(move |table| {
                     let bytes = table.serialize()?;
                     let pkg = chunk(&bytes, 12..bytes.len(), 0x200);
                     let t = chunk(&bytes, pkg.start + 288..pkg.end, 0x201);
+                    let mut texts = text_values(table, &["hello", "world", "added"])?;
+                    for res_id in [hello, 0x0104_0000] {
+                        texts.push(
+                            table
+                                .string_value_by_id(res_id)?
+                                .map_or("absent".into(), Cow::into_owned),
+                        );
+                    }
                     Ok(Readback {
-                        texts: text_values(table, &["hello", "world", "added"])?,
+                        texts,
                         numbers: ["hello", "world", "added"]
                             .iter()
                             .map(|name| {
@@ -118,7 +128,9 @@ fn index_cases() -> Vec<Case> {
                     })
                 }),
                 expected: Readback {
-                    texts: ["Hello", "Changed", "Added"].map(String::from).to_vec(),
+                    texts: ["Greeting", "Changed", "Added", "Greeting", "absent"]
+                        .map(String::from)
+                        .to_vec(),
                     numbers: vec![hello, hello | 2, hello | 3],
                     bytes: vec![vec![metadata], vec![1]],
                     ..Default::default()

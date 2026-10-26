@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::ffi::OsStr;
+use std::path::Path;
+
 use boltffi::export;
 use reseam_apk::Compression;
+use reseam_apk::axml::{AxmlDocument, AxmlEvent, is_compiled_axml};
 
 use super::handles::{bundle_path, checked, record_failure, with_ctx};
+use super::xml_attributes::find_attribute;
 use crate::context::PatchContext;
 
 pub(super) fn component_index(ctx: &PatchContext<'_>, component: Option<&str>) -> Option<usize> {
@@ -63,6 +68,58 @@ pub fn file_read(component: Option<String>, apk_path: String) -> Option<Vec<u8>>
         checked(ctx.read_file(index, &apk_path))
     })
     .flatten()
+}
+
+#[export]
+pub fn file_xml_with(component: Option<String>, attributes: Vec<String>) -> Vec<String> {
+    let names: Vec<&str> = attributes.iter().map(String::as_str).collect();
+    with_component(component, |ctx, index| {
+        let paths: Vec<String> = ctx
+            .apk()
+            .component(index)
+            .expect("component checked by with_component")
+            .entry_names()
+            .iter()
+            .filter(|path| Path::new(path.as_str()).extension() == Some(OsStr::new("xml")))
+            .map(ToString::to_string)
+            .collect();
+        checked(
+            paths
+                .into_iter()
+                .filter_map(|path| {
+                    carries_attribute(ctx, index, &path, &names)
+                        .map(|found| found.then_some(path))
+                        .transpose()
+                })
+                .collect::<Result<Vec<_>, String>>(),
+        )
+    })
+    .unwrap_or_default()
+}
+
+fn carries_attribute(
+    ctx: &mut PatchContext<'_>,
+    component: usize,
+    path: &str,
+    names: &[&str],
+) -> Result<bool, String> {
+    let in_file = |error: reseam_apk::ApkError| format!("{path}: {error}");
+    let Some(bytes) = ctx
+        .read_file(component, path)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(false);
+    };
+    if !is_compiled_axml(&bytes)
+        || !AxmlDocument::may_carry_attribute(&bytes, names).map_err(in_file)?
+    {
+        return Ok(false);
+    }
+    let document = AxmlDocument::parse(&bytes).map_err(in_file)?;
+    Ok(document.events().iter().any(|event| {
+        matches!(event, AxmlEvent::StartElement { attributes, .. }
+            if names.iter().any(|name| find_attribute(&document, attributes.as_slice(), name).is_some()))
+    }))
 }
 
 #[export]

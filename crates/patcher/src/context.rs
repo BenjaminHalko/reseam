@@ -12,7 +12,7 @@ mod undo;
 pub use dex::ClassFields;
 pub use extensions::ExtensionSet;
 pub(crate) use hermes::hermes_imports;
-pub use search::MethodRefQuery;
+pub use search::{FieldRefQuery, MethodRefQuery};
 
 use reseam_apk::ApkFile;
 use reseam_apk::reseam_dex::{ClassSkeleton, CodeItem, DexFile, EncodedMethod, MethodKind};

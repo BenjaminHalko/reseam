@@ -47,12 +47,14 @@ public final class app/reseam/patch/BoolOption : app/reseam/patch/Option {
 
 public final class app/reseam/patch/BytecodeScope {
 	public final fun classesExtending (Ljava/lang/String;)Ljava/util/List;
+	public final fun classesImplementing (Ljava/lang/String;)Ljava/util/List;
 	public final fun findClass-cbruItE (Ljava/lang/String;)Lapp/reseam/patch/dex/DexClass;
 	public final fun getClasses ()Ljava/util/List;
 	public final fun redirectCalls (Lapp/reseam/patch/types/MethodRef;Lapp/reseam/patch/ExtMethod;)I
 	public final fun redirectCalls (Ljava/lang/String;Ljava/lang/String;Lapp/reseam/patch/ExtMethod;)I
 	public final fun replaceAllStrings (Ljava/lang/String;Ljava/lang/String;)I
 	public final fun replaceStringsContaining (Ljava/lang/String;Lkotlin/jvm/functions/Function1;)I
+	public final fun replaceStringsStartingWith (Ljava/lang/String;Lkotlin/jvm/functions/Function1;)I
 }
 
 public final class app/reseam/patch/CallRedirectsKt {
@@ -237,6 +239,7 @@ public final class app/reseam/patch/FileScope {
 	public final fun write (Ljava/lang/String;[B)V
 	public final fun writeStored (Ljava/lang/String;[B)V
 	public final fun xml (Ljava/lang/String;)Lapp/reseam/patch/XmlDocument;
+	public final fun xmlFilesWith ([Ljava/lang/String;)Ljava/util/List;
 }
 
 public final class app/reseam/patch/FloatOption : app/reseam/patch/Option {
@@ -383,6 +386,7 @@ public final class app/reseam/patch/MethodLocal {
 }
 
 public abstract interface class app/reseam/patch/MethodQuery {
+	public abstract fun accesses (Lkotlin/jvm/functions/Function1;)V
 	public abstract fun calledBy (Lapp/reseam/patch/MethodTarget;)V
 	public abstract fun calls (Lapp/reseam/patch/MethodTarget;)V
 	public abstract fun calls (Lapp/reseam/patch/types/MethodRef;)V
@@ -735,6 +739,7 @@ public final class app/reseam/patch/ResourceScope {
 	public final fun getArrayValues (Ljava/lang/String;)Ljava/util/List;
 	public final fun getRaw (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/Long;
 	public final fun getString (Ljava/lang/String;)Ljava/lang/String;
+	public final fun getString-WZ4Q5Ns (I)Ljava/lang/String;
 	public final fun id-uT2Fmlo (Ljava/lang/String;Ljava/lang/String;)Lkotlin/UInt;
 	public final fun owningComponent (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
 	public final fun owningComponent-WZ4Q5Ns (I)Ljava/lang/String;
@@ -749,6 +754,7 @@ public final class app/reseam/patch/ResourceScope {
 	public final fun setArrayValues-xfHcF5w (Ljava/lang/String;Ljava/util/List;)I
 	public final fun setPackageName (Ljava/lang/String;)V
 	public final fun setString (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun setString-qim9Vi0 (ILjava/lang/String;)Z
 	public final fun setStringArray-xfHcF5w (Ljava/lang/String;Ljava/util/List;)I
 	public final fun style-_W1zjd8 (Ljava/lang/String;Ljava/lang/String;Lkotlin/jvm/functions/Function1;)I
 	public static synthetic fun style-_W1zjd8$default (Lapp/reseam/patch/ResourceScope;Ljava/lang/String;Ljava/lang/String;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)I
@@ -810,7 +816,9 @@ public final class app/reseam/patch/TargetsKt {
 	public static final fun classTarget (Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Lapp/reseam/patch/ClassTarget;
 	public static final fun enumConstant (Lapp/reseam/patch/ClassTarget;Ljava/lang/String;)Lapp/reseam/patch/FieldTarget;
 	public static final fun field (Lapp/reseam/patch/ClassTarget;Ljava/lang/String;)Lapp/reseam/patch/FieldTarget;
+	public static final fun field (Lapp/reseam/patch/MethodTarget;Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Lapp/reseam/patch/FieldTarget;
 	public static final fun field (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lapp/reseam/patch/FieldTarget;
+	public static synthetic fun field$default (Lapp/reseam/patch/MethodTarget;Ljava/lang/String;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lapp/reseam/patch/FieldTarget;
 	public static final fun fieldOfType (Lapp/reseam/patch/ClassTarget;Ljava/lang/String;)Lapp/reseam/patch/FieldTarget;
 	public static final fun fieldTarget (Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Lapp/reseam/patch/FieldTarget;
 	public static final fun klass (Ljava/lang/String;)Lapp/reseam/patch/ClassTarget;

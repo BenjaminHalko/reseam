@@ -227,6 +227,26 @@ fun ClassTarget.methods(
     }
 }
 
+/**
+ * The one field this method reads or writes that matches the block, which may read other targets.
+ */
+fun MethodTarget.field(debugName: String? = null, block: FieldRefMatch.() -> Unit): FieldTarget {
+    val owner = this
+    val label = debugName ?: "${owner.label}.field"
+    return FieldTarget(label) { runtime ->
+        val method = runtime.resolve(owner).value
+        val spec = FieldRefMatchSpec().apply(block)
+        val matches = runtime.index.fieldRefsOf(method).filter(spec::matches)
+        val ref =
+            matches.singleOrNull()
+                ?: error(
+                    "$label: expected one matching field in ${method.descriptor}, got ${matches.size}: " +
+                        matches.joinToString { "${it.definingClass}.${it.name}" }
+                )
+        Resolution(ref, wrapped(label, "${ref.definingClass}.${ref.name}:${ref.fieldType}"))
+    }
+}
+
 /** A field of this class by name. */
 fun ClassTarget.field(name: String): FieldTarget {
     val owner = this

@@ -62,6 +62,32 @@ impl StringPool {
         Ok(pool)
     }
     pub(super) fn raw(&self, i: usize) -> Result<Cow<'_, str>> {
+        let (pool, abs) = self.raw_at(i)?;
+        if self.encoding == StringEncoding::Utf8 {
+            decode_utf8(pool, abs)
+        } else {
+            decode_utf16(pool, abs).map(Cow::Owned)
+        }
+    }
+
+    pub(super) fn raw_equals(&self, i: usize, value: &str) -> Result<bool> {
+        let (pool, abs) = self.raw_at(i)?;
+        if self.encoding == StringEncoding::Utf8 {
+            return Ok(decode_utf8(pool, abs)? == value);
+        }
+        let (start, char_count) = utf16_span(pool, abs)?;
+        if char_count != value.encode_utf16().count() {
+            return Ok(false);
+        }
+        Ok(pool[start..start + char_count * 2]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_le_bytes(*unit))
+            .eq(value.encode_utf16()))
+    }
+
+    fn raw_at(&self, i: usize) -> Result<(&[u8], usize)> {
         let data = self.data.as_bytes();
         let offset = read_u32_le(data, self.offsets_start + i * 4, "string offset")? as usize;
         let abs = self
@@ -75,12 +101,7 @@ impl StringPool {
                 "string offset extends past pool",
             ));
         }
-        let pool = &data[..self.styles_start];
-        if self.encoding == StringEncoding::Utf8 {
-            decode_utf8(pool, abs)
-        } else {
-            decode_utf16(pool, abs).map(Cow::Owned)
-        }
+        Ok((&data[..self.styles_start], abs))
     }
 }
 
@@ -133,7 +154,7 @@ fn decode_len_u8(data: &[u8], pos: &mut usize) -> Result<usize> {
     Ok(length)
 }
 
-fn decode_utf16(data: &[u8], offset: usize) -> Result<String> {
+fn utf16_span(data: &[u8], offset: usize) -> Result<(usize, usize)> {
     let mut pos = offset;
     let first = read_u16_le(data, pos, "utf16 length")?;
     let char_count = if first & 0x8000 != 0 {
@@ -147,6 +168,11 @@ fn decode_utf16(data: &[u8], offset: usize) -> Result<String> {
     if char_count > (data.len() - pos) / 2 {
         return Err(malformed("utf16 string", pos, "string extends past pool"));
     }
+    Ok((pos, char_count))
+}
+
+fn decode_utf16(data: &[u8], offset: usize) -> Result<String> {
+    let (pos, char_count) = utf16_span(data, offset)?;
     let units = data[pos..pos + char_count * 2]
         .as_chunks::<2>()
         .0

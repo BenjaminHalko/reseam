@@ -7,7 +7,7 @@ use super::super::{ClassLocation, FingerprintLocation, MethodLocation, PatchCont
 use super::{fingerprint_location, method_location};
 use crate::error::Result;
 use reseam_apk::reseam_dex::{
-    Fingerprint, InstructionPattern, MethodIdx, RefKey, RefQuery, StringIdx,
+    Fingerprint, InstructionPattern, MethodIdx, RefKey, RefQuery, StringIdx, TypeIdx,
 };
 
 impl PatchContext<'_> {
@@ -171,6 +171,55 @@ impl PatchContext<'_> {
             }
             Ok(matches)
         })
+    }
+
+    pub fn find_classes_implementing(&self, interface: &str) -> Result<Vec<ClassLocation>> {
+        self.scan_all("classes implementing", |dex_idx, dex| {
+            let Some(wanted) = dex.find_type_idx(interface) else {
+                return Ok(Vec::new());
+            };
+            let classes = dex.classes();
+            Ok((0..classes.len())
+                .filter(|&class_idx| classes.interfaces(class_idx).contains(&wanted))
+                .map(|class_idx| ClassLocation { dex_idx, class_idx })
+                .collect())
+        })
+    }
+
+    /// Level by level across every DEX, since a subclass can live in another file.
+    pub fn find_classes_extending(&self, superclass: &str) -> Result<Vec<ClassLocation>> {
+        let mut seen = HashSet::from([superclass.to_owned()]);
+        let mut parents = vec![superclass.to_owned()];
+        let mut found = Vec::new();
+        while !parents.is_empty() {
+            let children = self.scan_all("classes extending", |dex_idx, dex| {
+                let wanted: HashSet<TypeIdx> = parents
+                    .iter()
+                    .filter_map(|parent| dex.find_type_idx(parent))
+                    .collect();
+                if wanted.is_empty() {
+                    return Ok(Vec::new());
+                }
+                Ok(dex
+                    .classes()
+                    .headers()
+                    .enumerate()
+                    .filter(|(_, header)| header.superclass.is_some_and(|s| wanted.contains(&s)))
+                    .map(|(class_idx, header)| {
+                        let descriptor = dex.type_descriptor(header.class_type).into_owned();
+                        (ClassLocation { dex_idx, class_idx }, descriptor)
+                    })
+                    .collect())
+            })?;
+            parents = Vec::new();
+            for (location, descriptor) in children {
+                if seen.insert(descriptor.clone()) {
+                    found.push(location);
+                    parents.push(descriptor);
+                }
+            }
+        }
+        Ok(found)
     }
 
     /// Methods referencing a string that starts with `prefix`, found through

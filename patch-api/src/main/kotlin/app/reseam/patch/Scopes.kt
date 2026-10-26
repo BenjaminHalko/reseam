@@ -20,12 +20,15 @@ import app.reseam.patch.native.fileSigners
 import app.reseam.patch.native.fileSource
 import app.reseam.patch.native.fileSourceRange
 import app.reseam.patch.native.fileSourceSize
+import app.reseam.patch.native.fileXmlWith
 import app.reseam.patch.native.findInstructionsByString
 import app.reseam.patch.native.findInstructionsByStringContains
+import app.reseam.patch.native.findInstructionsByStringPrefix
 import app.reseam.patch.native.logDebug
 import app.reseam.patch.native.logInfo
 import app.reseam.patch.native.logWarn
 import app.reseam.patch.native.xmlOpen
+import app.reseam.patch.types.InstructionHit
 import app.reseam.patch.types.MethodRef
 import java.io.InputStream
 
@@ -43,10 +46,13 @@ class BytecodeScope internal constructor() {
 
     fun findClass(name: String): DexClass? = ActiveRuntime.current.index.classFor(descriptor(name))
 
-    fun classesExtending(type: String): List<DexClass> {
-        val wanted = descriptor(type)
-        return classes.filter { ActiveRuntime.current.index.classExtends(it, wanted) }
-    }
+    /** Every class with [type] anywhere above it. */
+    fun classesExtending(type: String): List<DexClass> =
+        ActiveRuntime.current.index.classesExtending(descriptor(type)).toList()
+
+    /** Every class declaring [type] itself. */
+    fun classesImplementing(type: String): List<DexClass> =
+        ActiveRuntime.current.index.classesImplementing(descriptor(type)).toList()
 
     /**
      * Rewrites every `const-string` equal to `old` in the app; returns how many constants changed.
@@ -66,7 +72,14 @@ class BytecodeScope internal constructor() {
      * authority inside a `content://` URI; [replaceAllStrings] covers the whole-string case.
      */
     fun replaceStringsContaining(substring: String, transform: (String) -> String?): Int =
-        findInstructionsByStringContains(substring)
+        replaceLoaded(findInstructionsByStringContains(substring), transform)
+
+    /** [replaceStringsContaining] for constants starting with [prefix]. */
+    fun replaceStringsStartingWith(prefix: String, transform: (String) -> String?): Int =
+        replaceLoaded(findInstructionsByStringPrefix(prefix), transform)
+
+    private fun replaceLoaded(hits: List<InstructionHit>, transform: (String) -> String?): Int =
+        hits
             .mapNotNull { Method(it.method).stringRef(it.index.toInt()) }
             .distinct()
             .sumOf { old ->
@@ -120,6 +133,13 @@ class FileScope internal constructor(private val componentName: String? = null) 
     fun list(): List<String> = fileList(componentName)
 
     fun read(path: String): ByteArray? = fileRead(componentName, path)
+
+    /**
+     * Compiled XML files where an element carries one of [attributes], named as [XmlElement.get]
+     * takes them.
+     */
+    fun xmlFilesWith(vararg attributes: String): List<String> =
+        fileXmlWith(componentName, attributes.toList())
 
     /** The original, unmodified bytes of this component's APK, signing block included. */
     @Deprecated("Use sourceStream() to avoid copying the entire APK into memory")

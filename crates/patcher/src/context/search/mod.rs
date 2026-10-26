@@ -67,6 +67,22 @@ impl MethodRefQuery<'_> {
     }
 }
 
+/// A field reference to find reads and writes of. Unset parts match anything.
+pub struct FieldRefQuery<'a> {
+    pub owner: Option<&'a str>,
+    pub name: Option<&'a str>,
+    pub field_type: Option<&'a str>,
+}
+
+pub(super) struct Unresolved;
+
+pub(super) fn resolve<T>(
+    value: Option<&str>,
+    find: impl FnOnce(&str) -> Option<T>,
+) -> std::result::Result<Option<T>, Unresolved> {
+    value.map_or(Ok(None), |value| find(value).map(Some).ok_or(Unresolved))
+}
+
 pub(super) fn member_targets<K: Hash + Eq, I: Iterator<Item = K>>(
     dex: &DexFile,
     targets: &[(String, String)],

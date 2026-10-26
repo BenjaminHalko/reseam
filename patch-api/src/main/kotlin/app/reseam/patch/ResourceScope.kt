@@ -22,6 +22,7 @@ import app.reseam.patch.native.resFilePath
 import app.reseam.patch.native.resFilePaths
 import app.reseam.patch.native.resGetRaw
 import app.reseam.patch.native.resGetString
+import app.reseam.patch.native.resGetStringById
 import app.reseam.patch.native.resId
 import app.reseam.patch.native.resPoolAdd
 import app.reseam.patch.native.resPoolFindRefs
@@ -30,6 +31,7 @@ import app.reseam.patch.native.resPoolSet
 import app.reseam.patch.native.resReplaceEntry
 import app.reseam.patch.native.resSetPackageName
 import app.reseam.patch.native.resSetString
+import app.reseam.patch.native.resSetStringById
 import app.reseam.patch.native.resStringArraySet
 import app.reseam.patch.native.resStyleSet
 import app.reseam.patch.native.xmlOpen
@@ -69,6 +71,13 @@ class ResourceScope internal constructor(private val componentName: String? = nu
     fun getString(name: String): String? = resGetString(componentName, name)
 
     fun setString(name: String, value: String): Boolean = resSetString(componentName, name, value)
+
+    /** [getString] by the id a manifest or XML attribute references. */
+    fun getString(resId: UInt): String? = resGetStringById(componentName, resId)
+
+    /** [setString] by resource id. */
+    fun setString(resId: UInt, value: String): Boolean =
+        resSetStringById(componentName, resId, value)
 
     fun add(resType: String, name: String, value: String): UInt? = add(resType, name, value, "")
 

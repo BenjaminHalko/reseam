@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::ops::Range;
+
 use reseam_storage::Bytes;
 
 use super::{
@@ -26,19 +28,10 @@ impl AxmlDocument {
     /// exposing the document's infallible text queries.
     pub fn parse_bytes(bytes: Bytes) -> Result<Self> {
         let data = bytes.as_bytes();
-        require_len(data, 0, chunk::HEADER_LEN, "axml document")?;
-        let kind = read_u16_le(data, 0, "axml document")?;
-        if kind != CHUNK_XML_DOCUMENT {
-            return Err(invalid(
-                "axml document",
-                format!("expected XML document, got 0x{kind:04x}"),
-            ));
-        }
-        let header_size = read_u16_le(data, 2, "axml document")? as usize;
-        let end = chunk::chunk_end(data, 0)?;
-        if header_size < chunk::HEADER_LEN || header_size > end {
-            return Err(invalid("axml document", "invalid header size"));
-        }
+        let Range {
+            start: header_size,
+            end,
+        } = document_body(data)?;
         let mut string_pool = None;
         let mut resource_ids = Vec::new();
         let mut resource_header = Vec::new();
@@ -201,4 +194,21 @@ fn parse_start_element(
 
 fn optional(value: u32) -> Option<u32> {
     (value != NONE).then_some(value)
+}
+
+pub(super) fn document_body(data: &[u8]) -> Result<Range<usize>> {
+    require_len(data, 0, chunk::HEADER_LEN, "axml document")?;
+    let kind = read_u16_le(data, 0, "axml document")?;
+    if kind != CHUNK_XML_DOCUMENT {
+        return Err(invalid(
+            "axml document",
+            format!("expected XML document, got 0x{kind:04x}"),
+        ));
+    }
+    let header_size = read_u16_le(data, 2, "axml document")? as usize;
+    let end = chunk::chunk_end(data, 0)?;
+    if header_size < chunk::HEADER_LEN || header_size > end {
+        return Err(invalid("axml document", "invalid header size"));
+    }
+    Ok(header_size..end)
 }

@@ -826,11 +826,11 @@ fn after_hooks_preserve_entry_arguments_when_parameter_registers_are_reused() {
 }
 
 #[test]
-fn replace_strings_containing_rewrites_only_what_transform_returns() {
+fn replace_strings_containing_or_starting_with_rewrites_only_what_transform_returns() {
     use reseam_apk::reseam_dex::Instruction::ConstString;
 
     const REWRITTEN: &str = "content://app.reseam.gsf.gservices/prefix";
-    const ACTION: &str = "com.google.android.gsf.action.SYNC";
+    const ACTION: &str = "com.google.android.gsf.intent.SYNC";
 
     let owner = "Lcom/example/StringHolder;";
 
@@ -839,7 +839,8 @@ fn replace_strings_containing_rewrites_only_what_transform_returns() {
     assert_eq!(
         apk.read_component_entry(0, "assets/embedded-strings.txt")
             .unwrap(),
-        Some(b"2".to_vec())
+        Some(b"2|1".to_vec()),
+        "two URIs contain the value; only the action starts with it",
     );
 
     let dex = written_dex(&apk, 0);
@@ -1183,6 +1184,30 @@ fn enum_constants_resolve_by_name_through_obfuscated_fields() {
         .find_map(reseam_apk::reseam_dex::Instruction::field_ref)
         .map(|idx| written.string(written.field_id(idx).name).into_owned());
     assert_eq!(read.as_deref(), Some("c"));
+}
+
+#[test]
+fn field_access_queries_find_readers_writers_and_the_one_field_a_method_reads() {
+    let (_apk_dir, mut apk) = open_dex_apk(&[dex!("obfuscated_enum")]);
+    apply_fixture(&mut apk, "field-accesses", "fieldAccesses");
+
+    assert_eq!(
+        apk.read_component_entry(0, "assets/field-accesses.txt")
+            .unwrap(),
+        Some(b"Lcom/example/Plan;.<clinit>|Lcom/example/Plan;.a|Lcom/example/Plan;.b".to_vec()),
+    );
+}
+
+#[test]
+fn xml_files_are_found_by_the_attributes_their_elements_carry() {
+    let (_apk_dir, mut apk) = open_dex_apk(&[]);
+    apply_fixture(&mut apk, "xml-files-with", "xmlFilesWith");
+
+    assert_eq!(
+        apk.read_component_entry(0, "assets/xml-files-with.txt")
+            .unwrap(),
+        Some(format!("{LAYOUT_PATH}|").into_bytes()),
+    );
 }
 
 #[test]
@@ -1779,6 +1804,68 @@ fn high16_literals_are_consistent_in_queries_and_mutations() {
             ..
         }
     ));
+}
+
+#[test]
+fn hierarchy_queries_follow_subclasses_across_dex_files_and_direct_interfaces() {
+    use reseam_apk::reseam_dex::AccessFlags;
+
+    // PreferenceFragment, in the first DEX, extends PreferenceBase from the second.
+    let (_dir, mut apk) = open_dex_apk(&[dex!("inherited_app"), dex!("inherited_base")]);
+    let mut ctx = PatchContext::new(&mut apk);
+    let base = ctx.dex_file_mut(1).unwrap();
+    let object = Some("Ljava/lang/Object;");
+    let fragment = Some("Lcom/example/PreferenceFragment;");
+    base.create_class("Lcom/example/DeepFragment;", AccessFlags::PUBLIC, fragment)
+        .unwrap();
+    base.create_class("Lcom/example/Listener;", AccessFlags::INTERFACE, object)
+        .unwrap();
+    let listener = base.intern_type("Lcom/example/Listener;").unwrap();
+    let implementer = base
+        .create_class("Lcom/example/Impl;", AccessFlags::PUBLIC, object)
+        .unwrap();
+    base.class_mut(implementer)
+        .unwrap()
+        .interfaces
+        .push(listener);
+    base.create_class(
+        "Lcom/example/ImplChild;",
+        AccessFlags::PUBLIC,
+        Some("Lcom/example/Impl;"),
+    )
+    .unwrap();
+
+    let names = |found: Vec<reseam_patcher::context::ClassLocation>| {
+        let mut names: Vec<String> = found
+            .iter()
+            .map(|location| {
+                let dex = ctx.dex_file(location.dex_idx).unwrap();
+                let class_type = dex.classes().header(location.class_idx).class_type;
+                dex.type_descriptor(class_type).into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(
+        names(
+            ctx.find_classes_extending("Lcom/example/PreferenceBase;")
+                .unwrap()
+        ),
+        [
+            "Lcom/example/DeepFragment;",
+            "Lcom/example/PreferenceFragment;"
+        ],
+    );
+    assert_eq!(
+        names(
+            ctx.find_classes_implementing("Lcom/example/Listener;")
+                .unwrap()
+        ),
+        ["Lcom/example/Impl;"],
+        "a subclass inherits the interface without declaring it",
+    );
+    assert!(ctx.find_classes_extending("LAbsent;").unwrap().is_empty());
 }
 
 #[test]

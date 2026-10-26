@@ -53,6 +53,9 @@ interface MethodQuery {
 
     fun calledBy(target: MethodTarget)
 
+    /** Indexed field-reference query: reads or writes a matching field. */
+    fun accesses(block: FieldRefMatch.() -> Unit)
+
     /** The method invokes something matching `predicate`, in the app or the platform. */
     fun callsMethod(predicate: MethodRef.() -> Boolean)
 
@@ -93,8 +96,10 @@ interface ClassQuery {
      */
     fun enumConstants(vararg names: String)
 
+    /** Has [type] anywhere above it. */
     fun extends(type: String)
 
+    /** Declares [type] itself. */
     fun implements(type: String)
 
     /** The name the compiler recorded for the class, kept by many obfuscators. */

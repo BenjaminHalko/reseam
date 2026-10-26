@@ -68,12 +68,20 @@ internal class ClassQuerySpec : QuerySpec<DexClass, ClassRankScope>("class"), Cl
                 }
             }
         val seeds = selective.ifEmpty {
-            instanceFieldTypes.map {
-                {
-                    Seeded(
-                        "hasInstanceField($it)",
-                        handles(index.classesWithInstanceFieldType(it)),
-                    )
+            buildList {
+                interfaceTypes.forEach {
+                    add { Seeded("implements($it)", handles(index.classesImplementing(it))) }
+                }
+                superTypes.forEach {
+                    add { Seeded("extends($it)", handles(index.classesExtending(it))) }
+                }
+                instanceFieldTypes.forEach {
+                    add {
+                        Seeded(
+                            "hasInstanceField($it)",
+                            handles(index.classesWithInstanceFieldType(it)),
+                        )
+                    }
                 }
             }
         }

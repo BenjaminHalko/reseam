@@ -30,6 +30,7 @@ internal class MethodQuerySpec : QuerySpec<Method, MethodRankScope>("method"), M
     private val calledBy = mutableListOf<MethodTarget>()
     private val callMatches = mutableListOf<MethodRefMatchSpec>()
     private val callPredicates = mutableListOf<MethodRef.() -> Boolean>()
+    private val accessMatches = mutableListOf<FieldRefMatchSpec>()
     private val opcodes = mutableListOf<Opcode>()
     private val opcodeSequences = mutableListOf<List<Opcode?>>()
     private val predicates = mutableListOf<Method.() -> Boolean>()
@@ -105,6 +106,14 @@ internal class MethodQuerySpec : QuerySpec<Method, MethodRankScope>("method"), M
         calledBy += target
     }
 
+    override fun accesses(block: FieldRefMatch.() -> Unit) {
+        val spec = FieldRefMatchSpec().apply(block)
+        require(spec.owner != null || spec.name != null || spec.fieldType != null) {
+            "accesses requires an owner, name, or type"
+        }
+        accessMatches += spec
+    }
+
     override fun callsMethod(predicate: MethodRef.() -> Boolean) {
         callPredicates += predicate
     }
@@ -175,7 +184,10 @@ internal class MethodQuerySpec : QuerySpec<Method, MethodRankScope>("method"), M
                 .ifEmpty {
                     callMatches.map {
                         { Seeded("calls(reference query)", index.methodsCalling(it)) }
-                    }
+                    } +
+                        accessMatches.map {
+                            { Seeded("accesses(reference query)", index.methodsAccessing(it)) }
+                        }
                 }
                 .ifEmpty {
                     listOfNotNull(
@@ -284,6 +296,7 @@ internal class MethodQuerySpec : QuerySpec<Method, MethodRankScope>("method"), M
         if (callMatches.any { !index.matchesCall(value, it) }) return "no matching call"
         if (callPredicates.any { predicate -> index.methodRefsOf(value).none(predicate) })
             return "no matching call"
+        if (accessMatches.any { !index.matchesAccess(value, it) }) return "no matching field access"
         if (opcodes.any { !index.methodHasOpcode(value, it) }) return "opcode mismatch"
         if (opcodeSequences.any { value.indexOfOpcodeSequence(*it.toTypedArray()) == null })
             return "opcode sequence mismatch"
@@ -313,6 +326,8 @@ internal class MethodQuerySpec : QuerySpec<Method, MethodRankScope>("method"), M
         if (calledBy.isNotEmpty()) add("matched caller ${calledBy.joinToString { it.label }}")
         if (callMatches.isNotEmpty()) add("matched ${callMatches.size} indexed call query(s)")
         if (callPredicates.isNotEmpty()) add("matched ${callPredicates.size} call predicate(s)")
+        if (accessMatches.isNotEmpty())
+            add("matched ${accessMatches.size} indexed field access query(s)")
         if (opcodes.isNotEmpty()) add("matched opcodes ${opcodes.joinToString()}")
         opcodeSequences.forEach { add("matched opcode sequence ${describeSequence(it)}") }
         if (predicates.isNotEmpty()) add("matched ${predicates.size} custom predicate(s)")

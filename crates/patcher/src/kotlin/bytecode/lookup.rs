@@ -388,6 +388,22 @@ fn fingerprint_result(hit: FingerprintLocation) -> FingerprintResult {
 }
 
 #[export]
+pub fn find_classes_extending(superclass: String) -> Vec<u32> {
+    with_ctx(|ctx| checked(ctx.find_classes_extending(&superclass)))
+        .into_iter()
+        .map(alloc_class)
+        .collect()
+}
+
+#[export]
+pub fn find_classes_implementing(interface: String) -> Vec<u32> {
+    with_ctx(|ctx| checked(ctx.find_classes_implementing(&interface)))
+        .into_iter()
+        .map(alloc_class)
+        .collect()
+}
+
+#[export]
 pub fn find_classes_with_instance_field(field_type: String) -> Vec<u32> {
     with_ctx(|ctx| checked(ctx.find_classes_with_instance_field(&field_type)))
         .into_iter()

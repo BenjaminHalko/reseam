@@ -517,6 +517,47 @@ fn framework_attributes_match_by_resource_id_when_their_name_string_is_scrambled
     Ok(())
 }
 
+#[test]
+fn documents_are_screened_for_attributes_by_resource_id_or_local_name() -> TestResult {
+    let compiled = axml::compile_xml(
+        r#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.test"><application android:name=".App" plain="1"/></manifest>"#,
+        None,
+    )?;
+    let scrambled = replace_bytes(&compiled, b"name", b"zzzz");
+    for (data, name, expected) in [
+        (&compiled, "android:name", true),
+        (&scrambled, "android:name", true),
+        (&compiled, "android:label", false),
+        (&compiled, "plain", true),
+        (&compiled, "plai", false),
+    ] {
+        assert_eq!(
+            AxmlDocument::may_carry_attribute(data, &[name])?,
+            expected,
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn string_pools_find_a_value_in_either_encoding() -> TestResult {
+    for encoding in [StringEncoding::Utf8, StringEncoding::Utf16] {
+        let table = ResourceTable::parse(reseam_apk::Bytes::from_vec(resource_pool_fixture(
+            &["X", "World"],
+            encoding,
+        )))?;
+        for (value, expected) in [("World", true), ("X", true), ("Worl", false), ("Y", false)] {
+            assert_eq!(
+                table.global_strings().contains(value)?,
+                expected,
+                "{encoding:?} {value}"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn replace_bytes(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
     let at = bytes
         .windows(from.len())

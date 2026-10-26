@@ -4,9 +4,13 @@
 use std::collections::HashSet;
 
 use super::super::{InstructionLocation, PatchContext, SiteHit};
-use super::{MethodRefQuery, instruction_location, member_targets};
+use super::{
+    DexResult, FieldRefQuery, MethodRefQuery, instruction_location, member_targets, resolve,
+};
 use crate::error::Result;
-use reseam_apk::reseam_dex::{MethodIdx, ProtoIdx, RefKey, RefQuery, StringIdx, TypeIdx};
+use reseam_apk::reseam_dex::{
+    DexFile, FieldIdx, MethodIdx, ProtoIdx, RefKey, RefQuery, StringIdx, TypeIdx,
+};
 
 impl PatchContext<'_> {
     pub fn find_instructions_by_literal(&self, literal: i64) -> Result<Vec<InstructionLocation>> {
@@ -35,23 +39,24 @@ impl PatchContext<'_> {
         substring: &str,
     ) -> Result<Vec<InstructionLocation>> {
         self.scan_all("instructions by substring", |dex_idx, dex| {
-            let matches: HashSet<StringIdx> = dex
+            let matches = dex
                 .strings()
                 .iter()
                 .enumerate()
                 .filter(|(_, s)| s.contains(substring))
                 .map(|(i, _)| StringIdx(i as u32))
                 .collect();
-            if matches.is_empty() {
-                return Ok(Vec::new());
-            }
-            let query = RefQuery::any_of(matches.iter().map(|&s| RefKey::String(s)));
-            dex.scan_instructions(&query, |site| {
-                site.instruction
-                    .string_ref()
-                    .is_some_and(|sref| matches.contains(&sref))
-                    .then(|| instruction_location(dex_idx, site))
-            })
+            string_loads(dex_idx, dex, &matches)
+        })
+    }
+
+    pub fn find_instructions_by_string_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<InstructionLocation>> {
+        self.scan_all("instructions by string prefix", |dex_idx, dex| {
+            let matches = dex.strings().with_prefix(prefix).into_iter().collect();
+            string_loads(dex_idx, dex, &matches)
         })
     }
 
@@ -90,19 +95,11 @@ impl PatchContext<'_> {
             parameter_count,
         } = *query;
         self.scan_all("calls matching reference", |dex_idx, dex| {
-            let owner = match owner {
-                Some(v) => match dex.find_type_idx(v) {
-                    Some(v) => Some(v),
-                    None => return Ok(Vec::new()),
-                },
-                None => None,
-            };
-            let name = match name {
-                Some(v) => match dex.find_string_idx(v) {
-                    Some(v) => Some(v),
-                    None => return Ok(Vec::new()),
-                },
-                None => None,
+            let (Ok(owner), Ok(name)) = (
+                resolve(owner, |v| dex.find_type_idx(v)),
+                resolve(name, |v| dex.find_string_idx(v)),
+            ) else {
+                return Ok(Vec::new());
             };
             let matches_proto = |proto: ProtoIdx| {
                 let proto = dex.proto(proto);
@@ -162,20 +159,55 @@ impl PatchContext<'_> {
         })
     }
 
-    pub fn find_field_access_sites(&self, targets: &[(String, String)]) -> Result<Vec<SiteHit>> {
-        self.scan_all("field access sites", |dex_idx, dex| {
-            let map = member_targets(dex, targets, |class, name| dex.fields_of(class, Some(name)));
-            if map.is_empty() {
+    pub fn find_field_accesses_matching(
+        &self,
+        query: &FieldRefQuery<'_>,
+    ) -> Result<Vec<InstructionLocation>> {
+        self.scan_all("field accesses matching reference", |dex_idx, dex| {
+            let (Ok(owner), Ok(name), Ok(field_type)) = (
+                resolve(query.owner, |v| dex.find_type_idx(v)),
+                resolve(query.name, |v| dex.find_string_idx(v)),
+                resolve(query.field_type, |v| dex.find_type_idx(v)),
+            ) else {
+                return Ok(Vec::new());
+            };
+            let accepts = |field: &FieldIdx| {
+                let id = dex.fields().get(field.0 as usize);
+                name.is_none_or(|v| id.name == v) && field_type.is_none_or(|v| id.type_ == v)
+            };
+            let members: HashSet<FieldIdx> = match owner {
+                Some(owner) => dex.fields_of(owner, name).filter(accepts).collect(),
+                None => (0..dex.fields().len() as u32)
+                    .map(FieldIdx)
+                    .filter(accepts)
+                    .collect(),
+            };
+            if members.is_empty() {
                 return Ok(Vec::new());
             }
-            let query = RefQuery::any_of(map.keys().map(|&f| RefKey::Field(f)));
+            let query = RefQuery::any_of(members.iter().copied().map(RefKey::Field));
             dex.scan_instructions(&query, |site| {
-                let target_index = *map.get(&site.instruction.field_ref()?)?;
-                Some(SiteHit {
-                    loc: instruction_location(dex_idx, site),
-                    target_index,
-                })
+                members
+                    .contains(&site.instruction.field_ref()?)
+                    .then(|| instruction_location(dex_idx, site))
             })
         })
     }
+}
+
+fn string_loads(
+    dex_idx: usize,
+    dex: &DexFile,
+    strings: &HashSet<StringIdx>,
+) -> DexResult<Vec<InstructionLocation>> {
+    if strings.is_empty() {
+        return Ok(Vec::new());
+    }
+    let query = RefQuery::any_of(strings.iter().map(|&s| RefKey::String(s)));
+    dex.scan_instructions(&query, |site| {
+        site.instruction
+            .string_ref()
+            .is_some_and(|string| strings.contains(&string))
+            .then(|| instruction_location(dex_idx, site))
+    })
 }

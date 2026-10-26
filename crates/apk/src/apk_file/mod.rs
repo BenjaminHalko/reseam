@@ -221,6 +221,15 @@ impl ApkFile {
         .map(|found| found.map(|(_, value)| value))
     }
 
+    pub fn string_resource_by_id(&mut self, res_id: u32) -> Result<Option<String>> {
+        self.find_in_resources(|table| {
+            table
+                .string_value_by_id(res_id)
+                .map(|value| value.map(Cow::into_owned))
+        })
+        .map(|found| found.map(|(_, value)| value))
+    }
+
     fn find_in_resources<T>(
         &mut self,
         find: impl FnMut(&ResourceTable) -> Result<Option<T>>,
@@ -237,6 +246,17 @@ impl ApkFile {
         self.components[index]
             .resources_mut()?
             .map(|resources| resources.set_string_value(name, value))
+            .transpose()
+            .map(|changed| changed.unwrap_or(false))
+    }
+
+    pub fn set_string_resource_by_id(&mut self, res_id: u32, value: &str) -> Result<bool> {
+        let Some(index) = self.find_resource_by_id(res_id)? else {
+            return Ok(false);
+        };
+        self.components[index]
+            .resources_mut()?
+            .map(|resources| resources.set_string_value_by_id(res_id, value))
             .transpose()
             .map(|changed| changed.unwrap_or(false))
     }

@@ -101,9 +101,10 @@ files.delete("assets/tracking.json")
 ```kotlin
 bytecode.replaceAllStrings("com.example", newPackage)
 bytecode.replaceStringsContaining("example.com") { old -> old.replace("example.com", "example.org") }
+bytecode.replaceStringsStartingWith("content://com.example") { old -> old.replace("com.example", newPackage) }
 ```
 
-`replaceAllStrings` only matches whole strings. `replaceStringsContaining` lets you rewrite strings that contain a value; return null to leave one unchanged.
+`replaceAllStrings` only matches whole strings. `replaceStringsContaining` lets you rewrite strings that contain a value; return null to leave one unchanged. `replaceStringsStartingWith` does the same for strings that start with a value, and finds them without reading every string.
 
 ## Split APKs
 

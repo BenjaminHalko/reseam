@@ -17,9 +17,13 @@ import app.reseam.patch.dex.returnType
 import app.reseam.patch.native.allMethodHandles
 import app.reseam.patch.native.classMethodsByName
 import app.reseam.patch.native.countFollowingCheckCast
+import app.reseam.patch.native.fieldReferences
 import app.reseam.patch.native.findCallsMatching
 import app.reseam.patch.native.findClass
+import app.reseam.patch.native.findClassesExtending
+import app.reseam.patch.native.findClassesImplementing
 import app.reseam.patch.native.findClassesWithInstanceField
+import app.reseam.patch.native.findFieldAccessesMatching
 import app.reseam.patch.native.findInstructionsByLiteral
 import app.reseam.patch.native.findMethodsByName
 import app.reseam.patch.native.findMethodsByOpcodes
@@ -91,8 +95,11 @@ internal class SearchIndex(private val cache: RunCache) {
     private val seeds = HashMap<Seed, Set<UInt>>()
     private val classesByString = HashMap<String, Set<DexClass>>()
     private val classesByField = HashMap<String, Set<DexClass>>()
+    private val subclasses = HashMap<String, Set<DexClass>>()
+    private val implementers = HashMap<String, Set<DexClass>>()
     private val enumsByClass = HashMap<UInt, Map<String, FieldRef>>()
     private val refsByMethod = HashMap<UInt, List<MethodRef>>()
+    private val fieldRefsByMethod = HashMap<UInt, List<FieldRef>>()
     private val invokeSites = HashMap<MethodSignature, List<Pair<UInt, Int>>>()
     private val castCounts = HashMap<CastQuery, Int>()
     private val addedDex = HashMap<Int, Boolean>()
@@ -108,16 +115,23 @@ internal class SearchIndex(private val cache: RunCache) {
         seeds.clear()
         classesByString.clear()
         classesByField.clear()
+        subclasses.clear()
+        implementers.clear()
         enumsByClass.clear()
         refsByMethod.clear()
+        fieldRefsByMethod.clear()
         invokeSites.clear()
         castCounts.clear()
         addedDex.clear()
         matchingCalls.clear()
+        matchingAccesses.clear()
     }
 
     fun invalidateMethods(handles: UIntArray) {
-        handles.forEach { refsByMethod.remove(it) }
+        handles.forEach {
+            refsByMethod.remove(it)
+            fieldRefsByMethod.remove(it)
+        }
         seeds.keys.removeAll {
             it is Seed.Op ||
                 it is Seed.Ops ||
@@ -130,6 +144,7 @@ internal class SearchIndex(private val cache: RunCache) {
         invokeSites.clear()
         castCounts.clear()
         matchingCalls.clear()
+        matchingAccesses.clear()
     }
 
     private fun <K, V> cached(store: MutableMap<K, V>, key: K, compute: () -> V): V {
@@ -237,9 +252,20 @@ internal class SearchIndex(private val cache: RunCache) {
     fun classesWithSourceFile(name: String): List<DexClass> = classesBySourceFile[name].orEmpty()
 
     fun classesWithInstanceFieldType(type: String): Set<DexClass> =
-        cached(classesByField, type) {
-            findClassesWithInstanceField(type).map(::DexClass).toCollection(linkedSetOf())
-        }
+        classesBy(classesByField, type, ::findClassesWithInstanceField)
+
+    fun classesExtending(type: String): Set<DexClass> =
+        classesBy(subclasses, type, ::findClassesExtending)
+
+    fun classesImplementing(type: String): Set<DexClass> =
+        classesBy(implementers, type, ::findClassesImplementing)
+
+    private fun classesBy(
+        store: HashMap<String, Set<DexClass>>,
+        type: String,
+        find: (String) -> UIntArray,
+    ): Set<DexClass> =
+        cached(store, type) { find(type).map(::DexClass).toCollection(linkedSetOf()) }
 
     private val matchingCalls = mutableMapOf<MethodRefMatchSpec, Set<UInt>>()
 
@@ -266,6 +292,21 @@ internal class SearchIndex(private val cache: RunCache) {
                 .mapTo(linkedSetOf()) { it.method }
         }
 
+    private val matchingAccesses = mutableMapOf<FieldRefMatchSpec, Set<UInt>>()
+
+    fun matchesAccess(method: Method, spec: FieldRefMatchSpec): Boolean {
+        cache.synchronize()
+        return matchingAccesses[spec]?.contains(method.handle)
+            ?: fieldRefsOf(method).any(spec::matches)
+    }
+
+    fun methodsAccessing(spec: FieldRefMatchSpec): Set<UInt> =
+        cached(matchingAccesses, spec) {
+            findFieldAccessesMatching(spec.owner, spec.name, spec.fieldType).mapTo(linkedSetOf()) {
+                it.method
+            }
+        }
+
     fun methodHasString(method: Method, value: String): Boolean =
         method.indexOfFirstString(value) != null
 
@@ -282,6 +323,9 @@ internal class SearchIndex(private val cache: RunCache) {
         cached(refsByMethod, method.handle) {
             methodReferences(method.handle).distinct()
         }
+
+    fun fieldRefsOf(method: Method): List<FieldRef> =
+        cached(fieldRefsByMethod, method.handle) { fieldReferences(method.handle) }
 
     fun calleesOf(method: Method): List<Method> = methodRefsOf(method).mapNotNull(::methodFor)
 

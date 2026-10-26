@@ -132,6 +132,19 @@ impl StringPool {
         Ok(None)
     }
 
+    /// Whether the pool holds `value`, without building [`Self::find`]'s index.
+    pub fn contains(&self, value: &str) -> Result<bool> {
+        if self.find_added(value).is_some() {
+            return Ok(true);
+        }
+        for i in (0..self.raw_len).filter(|&i| !self.overrides.contains_key(&(i as u32))) {
+            if self.raw_equals(i, value)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn find_added(&self, value: &str) -> Option<u32> {
         if let Some((&i, _)) = self.overrides.iter().find(|(_, s)| s.as_str() == value) {
             return Some(i);

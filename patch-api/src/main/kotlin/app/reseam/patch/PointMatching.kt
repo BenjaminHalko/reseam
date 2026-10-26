@@ -301,23 +301,31 @@ internal class MethodRefMatchSpec : MethodRefMatch {
 }
 
 internal class FieldRefMatchSpec : FieldRefMatch {
-    private val checks = mutableListOf<(FieldRef) -> Boolean>()
+    var owner: String? = null
+        private set
+
+    var name: String? = null
+        private set
+
+    var fieldType: String? = null
+        private set
 
     override fun owner(type: String) {
-        val wanted = descriptor(type)
-        checks += { it.definingClass == wanted }
+        owner = descriptor(type)
     }
 
     override fun name(value: String) {
-        checks += { it.name == value }
+        name = value
     }
 
     override fun type(descriptor: String) {
-        val wanted = descriptor(descriptor)
-        checks += { it.fieldType == wanted }
+        fieldType = descriptor(descriptor)
     }
 
-    fun matches(ref: FieldRef) = checks.all { it(ref) }
+    fun matches(ref: FieldRef) =
+        (owner == null || ref.definingClass == owner) &&
+            (name == null || ref.name == name) &&
+            (fieldType == null || ref.fieldType == fieldType)
 }
 
 internal fun inferType(method: Method, index: Int): String? {

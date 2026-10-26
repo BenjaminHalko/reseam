@@ -9,6 +9,7 @@ mod document;
 mod edit;
 mod inline;
 mod manifest;
+mod probe;
 mod reader;
 mod text;
 mod writer;

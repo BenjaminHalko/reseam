@@ -146,6 +146,46 @@ pub fn res_set_string(
 }
 
 #[export]
+pub fn res_get_string_by_id(
+    component: Option<String>,
+    res_id: u32,
+) -> Result<Option<String>, String> {
+    match component {
+        None => crate::kotlin::handles::with_ctx_result(|ctx| {
+            ctx.apk_mut()
+                .string_resource_by_id(res_id)
+                .map_err(|error| error.to_string())
+        }),
+        Some(_) => with_resources_read_result(component, |resources| {
+            resources
+                .string_value_by_id(res_id)
+                .map(|value| value.map(Cow::into_owned))
+                .map_err(|error| error.to_string())
+        }),
+    }
+}
+
+#[export]
+pub fn res_set_string_by_id(
+    component: Option<String>,
+    res_id: u32,
+    value: String,
+) -> Result<bool, String> {
+    match component {
+        None => crate::kotlin::handles::with_ctx_result(|ctx| {
+            ctx.apk_mut()
+                .set_string_resource_by_id(res_id, &value)
+                .map_err(|error| error.to_string())
+        }),
+        Some(_) => with_resources_result(component, |resources| {
+            resources
+                .set_string_value_by_id(res_id, &value)
+                .map_err(|error| error.to_string())
+        }),
+    }
+}
+
+#[export]
 pub fn res_add(
     component: Option<String>,
     res_type: String,

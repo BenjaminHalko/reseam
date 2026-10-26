@@ -56,9 +56,6 @@ fn bridge_queries_distinguish_absence_from_invalid_requests() {
             search::find_method_call_sites(vec!["LRequired;".into()], vec![]);
         }),
         (false, |_handles| {
-            search::find_field_access_sites(vec![], vec!["value".into()]);
-        }),
-        (false, |_handles| {
             lookup::find_methods_by_opcodes(vec![i32::MAX]);
         }),
         (false, |handles| {

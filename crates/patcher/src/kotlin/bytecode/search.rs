@@ -3,11 +3,11 @@
 
 use crate::kotlin::handles::{checked, record_failure};
 use boltffi::export;
-use reseam_apk::reseam_dex::Instruction as DexInsn;
+use reseam_apk::reseam_dex::{DexFile, Instruction as DexInsn};
 
-use crate::context::{InstructionLocation, MethodRefQuery, SiteHit};
+use crate::context::{FieldRefQuery, InstructionLocation, MethodRefQuery, SiteHit};
 use crate::error::{PatcherError, Result as PatcherResult};
-use crate::kotlin::convert::dex_to_kotlin;
+use crate::kotlin::convert::{self, dex_to_kotlin};
 use crate::kotlin::handles::{
     alloc_method, alloc_methods, method_location, with_code, with_ctx, with_instruction,
 };
@@ -31,14 +31,27 @@ pub fn get_instructions(m: u32) -> Vec<Instruction> {
 
 #[export]
 pub fn method_references(m: u32) -> Vec<MethodRef> {
+    distinct_references(m, DexInsn::method_ref, convert::resolve_method_ref)
+}
+
+#[export]
+pub fn field_references(m: u32) -> Vec<FieldRef> {
+    distinct_references(m, DexInsn::field_ref, convert::resolve_field_ref)
+}
+
+fn distinct_references<I: Copy + Eq + std::hash::Hash, R>(
+    m: u32,
+    reference: impl Fn(&DexInsn) -> Option<I>,
+    resolve: impl Fn(&DexFile, I) -> R,
+) -> Vec<R> {
     with_code(m, |dex, code| {
         let mut seen = rustc_hash::FxHashSet::default();
         Some(
             code.instructions()
                 .iter()
-                .filter_map(DexInsn::method_ref)
-                .filter(|reference| seen.insert(*reference))
-                .map(|reference| crate::kotlin::convert::resolve_method_ref(dex, reference))
+                .filter_map(&reference)
+                .filter(|idx| seen.insert(*idx))
+                .map(|idx| resolve(dex, idx))
                 .collect(),
         )
     })
@@ -115,6 +128,13 @@ pub fn find_instructions_by_string_contains(substring: String) -> Vec<Instructio
 }
 
 #[export]
+pub fn find_instructions_by_string_prefix(prefix: String) -> Vec<InstructionHit> {
+    hits(with_ctx(|ctx| {
+        checked(ctx.find_instructions_by_string_prefix(&prefix))
+    }))
+}
+
+#[export]
 pub fn find_instructions_by_resource_id(res_type: String, res_name: String) -> Vec<InstructionHit> {
     match with_ctx(|ctx| checked(ctx.apk_mut().find_resource(&res_type, &res_name))) {
         Some((_, res_id)) => find_instructions_by_literal(i64::from(res_id)),
@@ -136,15 +156,17 @@ pub fn find_method_call_sites(
 }
 
 #[export]
-pub fn find_field_access_sites(
-    class_names: Vec<String>,
-    field_names: Vec<String>,
-) -> Vec<MethodCallSiteResult> {
-    site_results(with_ctx(|ctx| {
-        checked(
-            member_queries(class_names, field_names)
-                .and_then(|targets| ctx.find_field_access_sites(&targets)),
-        )
+pub fn find_field_accesses_matching(
+    owner: Option<String>,
+    name: Option<String>,
+    field_type: Option<String>,
+) -> Vec<InstructionHit> {
+    hits(with_ctx(|ctx| {
+        checked(ctx.find_field_accesses_matching(&FieldRefQuery {
+            owner: owner.as_deref(),
+            name: name.as_deref(),
+            field_type: field_type.as_deref(),
+        }))
     }))
 }
 
