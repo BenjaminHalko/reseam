@@ -60,7 +60,7 @@ cargo test --workspace --no-fail-fast
 ./gradlew spotlessCheck checkKotlinAbi
 ```
 
-Code style is in [`STYLE.md`](STYLE.md). How the engine and the patch API talk to each other is in [`docs/internals/boltffi.md`](docs/internals/boltffi.md).
+How to write code here is in [`AGENTS.md`](AGENTS.md). How the engine and the patch API talk to each other is in [`docs/internals/boltffi.md`](docs/internals/boltffi.md).
 
 ## Release
 

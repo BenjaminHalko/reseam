@@ -1,8 +1,91 @@
-# Agents
+# Reseam engine
 
-Follow `STYLE.md`. Its checks must pass before a change is done.
+This repo is the engine that patches Android apps. The Rust crates read and write DEX files, APKs, Android resources and Hermes bytecode. The patcher runs Kotlin patches against an app through a JNI bridge, and the SDK wraps all of it for the apps that use the engine (the CLI, the browser build, Manager). Patches themselves are in the sibling repo `../patches`.
 
-- `patch-api/generated` is gitignored: run `cargo xtask regen patch-api` after changing an exported JNI
-  function, or the patcher build script fails.
-- Builds share one machine: keep `CARGO_BUILD_JOBS` from the environment (the `justfile` defaults to 2), and never run two builds at once.
-- Use `cargo test --workspace --no-fail-fast`; without it cargo stops at the first failing test binary.
+Each file should do one thing, and each rule should be written once. Please keep it like that when you change things.
+
+## Layout
+
+The crates, from the bottom up. Lower crates don't depend on higher ones, and crates use each other only through what they export at the crate root.
+
+- `bytes`, `storage`, `journal`: reading binary fields, file-backed data and temp files, undo for patch runs.
+- `dex`, `hermes`: the DEX and Hermes bytecode formats. Reading, the in-memory model, editing and writing each have their own modules.
+- `apk`, `sign`: APK files (ZIP, binary XML, resources, the app's DEX files) and APK signing.
+- `model`: types shared between the engine and the apps that use it.
+- `patcher`: patch bundles, choosing and ordering patches, running them, and the Kotlin bridge (`bridge/`).
+- `sdk`: what host apps call. It has `native`, `browser` and `compression` builds. The CLI only depends on `sdk`, `model` and `storage`.
+- `patch-api`: the Kotlin API patch authors use. Public API is at the package root, internals are in `run/`, `search/`, `points/`, `emit/`, `binding/`, `dex/` and `settings/`.
+- Tooling: `xtask` (code generation and packaging), `gradle-plugin`, `browser`, `app-runtime` and `sdk-kotlin`. `fixtures` builds test inputs.
+
+## Docs worth reading
+
+- `README.md` for the layout, building and releasing.
+- `docs/` is the guide for patch authors. `docs/reference.md` lists the whole patch API and has to match `patch-api`.
+- Each crate's `README.md`, and `crates/patcher/ARCHITECTURE.md` for how a patch run works.
+- `docs/internals/boltffi.md` explains how Rust and the Kotlin patch API talk to each other.
+- `crates/cli/docs/` covers the CLI.
+- `../notes/RELEASING.md` covers release order and versions.
+
+## Working on the code
+
+- Read the code around what you're changing first, and write in the same style.
+- Check whether something already does what you need before you write it. If it does, use it or extend it.
+- Fix the actual cause. Don't add a special case for one input, a flag, a retry or a temporary workaround. Someone has to clean those up later.
+- Update everything your change affects in the same change: Rust, Kotlin and TypeScript callers, `../patches`, generated bindings, docs and tests. Don't leave old and new versions side by side or add compatibility shims.
+- Think about where the code belongs before writing it. If a file would end up doing two things, split it first. If you'd be writing the same logic a second time, pull it out and share it.
+- Remove anything your change leaves unused.
+
+## Things to avoid
+
+- Files that mix jobs, like a model together with its parser and writer.
+- Writing the same logic in two places: a reader and writer that each encode the format, the same check in Rust and Kotlin, a copied lookup loop, or a hand-written copy of a type that can be generated.
+- Functions or types that just pass calls through, and re-exporting another crate.
+- Code nobody uses: exports with no callers, public functions that only tests call, fields that are never set.
+- Strings where a type belongs: ids built by joining strings, string keys, `bool` parameters that switch behavior, and error messages with the details baked into text.
+- Hiding errors by returning a default or `None`, and panicking on bad input.
+- Traits, generics, builders or extra layers that only have one user.
+- Modules that depend on each other in a circle, or a lower layer reaching into a higher one.
+- Comments that repeat what the code says, and section banner comments.
+- Tests that just repeat the implementation, and test data built byte by byte.
+
+## Types, errors and file formats
+
+- Use proper types for data: newtypes for ids, enums for kinds and modes. Turn values into text only at the edges (CLI arguments, JSON, XML).
+- Bundle manifests, the release index (`patches.json`), the SDK and browser types, and the patch API are read by other code, including older releases out in the wild. Keep them stable. If one really has to change, update everything that reads it and bump the engine version as described in `../notes/RELEASING.md`.
+- Each library crate has a single `thiserror` error type that says what went wrong and where. Pass errors up with `?`. Only use `expect` for things the code itself guarantees, and say what that is in the message.
+
+## Performance
+
+- Keep DEX and APK data on disk and read the ranges you need. Avoid loading whole files or copying big buffers.
+- If you change decoding, patching or writing, run `reseam perf` before and after and compare time and peak memory.
+
+## Kotlin
+
+- Keep the public `patch-api` small and make everything else `internal`. Generated bindings shouldn't show up in public signatures.
+- Before you remove or change public API, check how `../patches` uses it.
+
+## Comments and tests
+
+- Only comment to explain something the code can't show, like a platform quirk or a format rule. Don't describe what the code does. The patch API needs doc comments, and so does any public item whose behavior isn't clear from its signature.
+- Write tests for behavior users rely on. When you test the same thing with several inputs, use one table-driven test. Use `reseam-fixtures` and the shared test helpers for inputs, and test through the public API.
+
+## Maintainability checks with Entanglement
+
+Run the installed `entanglement` CLI on any non-trivial change. The entanglement skill has the full workflow.
+
+1. Before editing, save a baseline somewhere outside the repo: `entanglement repo . --metrics nloc,cc,cogc,mi,structure --format json > <scratch>/baseline.json`.
+2. After each round of edits, run it again and compare against the baseline with the skill's `compare.py --structure`.
+3. Every file you add or change needs a maintainability index of at least 10, and ideally 20 or more. If a file drops below that, split it by what it does. Don't squash code onto fewer lines or split files at random just to raise the number. Generated files don't count.
+4. Don't add new dependency cycles. If line count or complexity grows, make sure the growth is needed.
+
+## Before you call it done
+
+- `just check` runs everything. While working, run at least `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace --no-fail-fast`.
+- Don't edit generated code by hand. Run `cargo xtask regen <target>` after changing exported JNI functions or model types, and `./gradlew :reseam-patch-sdk:updateKotlinAbi` after an intended patch API change.
+- For changes to DEX, APK or emitted code, patch a few real apps before and after, compare the output, and run ART verification on the result.
+- Leave `CARGO_BUILD_JOBS` as the environment sets it.
+- Run the checks and read their output before saying something works.
+
+## Commits
+
+Write one-line conventional commits like `fix(dex): …` or `refactor(apk): …`, with nothing below the subject line.
