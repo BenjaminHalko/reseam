@@ -48,11 +48,24 @@ impl SigningKey {
             stage(cert_path, self.certificate_der())?,
         ];
         for (path, file) in [key_path, cert_path].into_iter().zip(staged) {
-            file.persist_noclobber(path)
-                .map_err(|error| file_error("publishing credentials", path, error.error))?;
+            publish(file, path)
+                .map_err(|source| file_error("publishing credentials", path, source))?;
         }
         Ok(())
     }
+}
+
+/// Claims `path` exclusively, then renames over the claim. `persist_noclobber` falls back to a
+/// hard link on kernels without `renameat2`, and Android denies apps hard links.
+fn publish(file: tempfile::NamedTempFile, path: &Path) -> std::io::Result<()> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.persist(path).map(drop).map_err(|error| {
+        drop(fs::remove_file(path));
+        error.error
+    })
 }
 
 fn read(path: &Path) -> Result<Vec<u8>> {
