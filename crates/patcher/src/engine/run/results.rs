@@ -44,7 +44,7 @@ impl<'a> Run<'a> {
         }
         let skipped = |reason: String| Some(PatchStatus::Skipped { reason });
         for &dependency in plan.dependencies(idx) {
-            let name = &self.specs[dependency].reference;
+            let name = &self.specs[dependency].reference();
             match self.results[dependency]
                 .as_ref()
                 .map(|result| &result.status)
@@ -118,11 +118,11 @@ impl<'a> Run<'a> {
     ) {
         let spec = self.specs[idx];
         self.results[idx] = Some(PatchResult {
-            patch: spec.reference.clone(),
+            patch: spec.reference().clone(),
             hidden: spec.hidden,
             required_by: plan
                 .required_by(idx)
-                .map(|dependent| self.specs[dependent].reference.clone())
+                .map(|dependent| self.specs[dependent].reference().clone())
                 .collect(),
             status,
             logs,
@@ -159,7 +159,7 @@ impl<'a> Run<'a> {
                 continue;
             }
             if self.reported[idx].take().is_some() {
-                reverted.push(self.specs[idx].reference.clone());
+                reverted.push(self.specs[idx].reference().clone());
             }
             self.results[idx] = None;
             self.finalized[idx] = false;

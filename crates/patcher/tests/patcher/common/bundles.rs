@@ -135,7 +135,7 @@ pub fn load_all(path: &Path) -> reseam_patcher::bundle::PatchBundle {
     let ids = archive
         .patches()
         .iter()
-        .map(|spec| spec.reference.id.clone())
+        .map(|spec| spec.reference().id.clone())
         .collect();
     archive.load(&ids).unwrap()
 }

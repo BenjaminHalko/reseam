@@ -69,7 +69,7 @@ pub fn run_bundle_list(command: &BundleListCommand) -> Result<()> {
         .patches
         .iter()
         .filter(|patch| patch.spec.hidden)
-        .map(|patch| &patch.spec.reference)
+        .map(|patch| patch.spec.reference())
         .collect();
     for (index, patch) in response
         .patches
@@ -91,7 +91,7 @@ pub fn run_bundle_list(command: &BundleListCommand) -> Result<()> {
     Ok(())
 }
 
-fn print_patch(index: usize, patch: &PatchMetadata, hidden: &HashSet<&PatchRef>) {
+fn print_patch(index: usize, patch: &PatchMetadata, hidden: &HashSet<PatchRef>) {
     let spec = &patch.spec;
     println!(
         "  {:>3}. [{}] {} - {}",
@@ -100,7 +100,7 @@ fn print_patch(index: usize, patch: &PatchMetadata, hidden: &HashSet<&PatchRef>)
         spec.name,
         spec.description
     );
-    println!("       id: {}", spec.reference.id);
+    println!("       id: {}", spec.reference().id);
     match &spec.compatibility {
         Compatibility::Universal => println!("       packages: any app"),
         Compatibility::Packages { packages } => {

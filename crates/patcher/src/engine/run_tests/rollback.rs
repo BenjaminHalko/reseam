@@ -11,7 +11,7 @@ fn adding(
     runs: Arc<Mutex<Vec<String>>>,
     extra: impl Fn(&mut PatchContext<'_>) -> Result<()> + Send + Sync + 'static,
 ) -> Patch {
-    let id = declaration.reference.id.clone();
+    let id = declaration.reference().id.clone();
     Patch::new(declaration, false, move |phase| {
         let PatchPhase::Execute(ctx) = phase else {
             unreachable!("fixture patches only execute");

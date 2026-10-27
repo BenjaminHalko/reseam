@@ -76,10 +76,8 @@ pub(in crate::bridge) fn read_patch(
     let options = map_list(env, &options_list, "options", read_option)?;
     let spec = PatchSpec {
         name: name.unwrap_or_else(|| id.clone()),
-        reference: PatchRef {
-            bundle: bundle.to_owned(),
-            id,
-        },
+        bundle: bundle.to_owned(),
+        id,
         hidden,
         description: string(env, patch, "getDescription")?,
         enabled_by_default: !hidden && boolean(env, patch, "getEnabled")?,

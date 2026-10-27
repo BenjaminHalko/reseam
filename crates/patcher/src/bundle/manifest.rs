@@ -104,11 +104,11 @@ pub(super) struct ManifestHeader {
 impl BundleManifest {
     pub(super) fn check_patches(&self) -> Result<()> {
         if let Some(patch) = self.patches.iter().find(|patch| {
-            patch.reference.bundle != self.bundle.name || patch.reference.id.is_empty()
+            patch.reference().bundle != self.bundle.name || patch.reference().id.is_empty()
         }) {
             return Err(BundleError::PatchIdentity {
                 bundle: self.bundle.name.clone(),
-                patch: patch.reference.clone(),
+                patch: patch.reference().clone(),
             }
             .into());
         }

@@ -24,6 +24,7 @@ type Callback = dyn Fn(PatchPhase<'_, '_>) -> Result<()> + Send + Sync;
 /// execution failure.
 pub struct Patch {
     spec: PatchSpec,
+    reference: PatchRef,
     finalizes: bool,
     callback: Box<Callback>,
 }
@@ -40,6 +41,7 @@ impl Patch {
         callback: impl Fn(PatchPhase<'_, '_>) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
         Self {
+            reference: spec.reference(),
             spec,
             finalizes,
             callback: Box::new(callback),
@@ -51,7 +53,7 @@ impl Patch {
     }
 
     pub fn reference(&self) -> &PatchRef {
-        &self.spec.reference
+        &self.reference
     }
 
     pub fn finalizes(&self) -> bool {

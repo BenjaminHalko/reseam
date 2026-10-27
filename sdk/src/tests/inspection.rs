@@ -34,7 +34,7 @@ name = "Example patch"
 hidden = false
 description = "Static metadata"
 enabled_by_default = true
-dependencies = [{{ bundle = "other", id = "sample.core" }}]
+dependencies = ["other/sample.core"]
 
 [patches.compatibility]
 kind = "packages"
@@ -110,7 +110,7 @@ fn inspection_reads_signed_catalogs_without_loading_even_trusted_code() {
         assert!(response.bundles[0].problem.is_none());
         assert_eq!(response.patches.len(), 1);
         let patch = &response.patches[0];
-        assert_eq!(patch.spec.reference.id, "sample.patch");
+        assert_eq!(patch.spec.id, "sample.patch");
         assert_eq!(
             patch.spec.dependencies,
             [reseam_model::PatchRef::parse("other/sample.core").unwrap()]

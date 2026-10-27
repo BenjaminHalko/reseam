@@ -32,10 +32,8 @@ impl From<&PatchStatus> for Status {
 
 fn declared(bundle: &str, id: &str, dependencies: &[&str]) -> PatchSpec {
     PatchSpec {
-        reference: PatchRef {
-            bundle: bundle.into(),
-            id: id.into(),
-        },
+        bundle: bundle.into(),
+        id: id.into(),
         name: id.into(),
         hidden: false,
         description: String::new(),

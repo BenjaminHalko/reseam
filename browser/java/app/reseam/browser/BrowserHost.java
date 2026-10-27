@@ -129,13 +129,13 @@ public final class BrowserHost {
             Object name = get(patch, "getName");
             String id = reference.substring(bundle.length() + 1);
             boolean hidden = name == null || (Boolean)get(patch, "getHidden");
-            List<Object> dependencies = new ArrayList<>();
+            List<String> dependencies = new ArrayList<>();
             for (Object dependency : list(get(patch, "getDependencies"))) {
-                if (external.isInstance(dependency)) dependencies.add(map("bundle", get(dependency, "getBundle"), "id", get(dependency, "getId")));
+                if (external.isInstance(dependency)) dependencies.add(get(dependency, "getBundle") + "/" + get(dependency, "getId"));
                 else {
                     String target = references.get(dependency);
                     if (target == null) throw new IllegalArgumentException("Undeclared dependency of " + reference);
-                    dependencies.add(map("bundle", bundle, "id", target.substring(bundle.length() + 1)));
+                    dependencies.add(target);
                 }
             }
             List<Object> compatibility = new ArrayList<>();

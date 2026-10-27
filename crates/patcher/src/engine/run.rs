@@ -135,9 +135,9 @@ fn loaded_code<'a>(
     specs
         .iter()
         .enumerate()
-        .map(|(idx, spec)| match by_reference.get(&spec.reference) {
+        .map(|(idx, spec)| match by_reference.get(&spec.reference()) {
             Some(&patch) => Ok(Some(patch)),
-            None if plan.executes(idx) => Err(PatcherError::NotLoaded(spec.reference.clone())),
+            None if plan.executes(idx) => Err(PatcherError::NotLoaded(spec.reference().clone())),
             None => Ok(None),
         })
         .collect()

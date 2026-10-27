@@ -92,7 +92,7 @@ pub(super) fn dependency_edges(specs: &[&PatchSpec], index: &PatchCatalog<'_>) -
                     dependency: dependency.clone(),
                     availability: if specs
                         .iter()
-                        .any(|spec| spec.reference.bundle == dependency.bundle)
+                        .any(|spec| spec.reference().bundle == dependency.bundle)
                     {
                         BundleAvailability::Loaded
                     } else {
@@ -132,7 +132,7 @@ pub(super) fn topological_order(
     if order.len() != specs.len() {
         let names = (0..specs.len())
             .filter(|&i| in_degree[i] > 0)
-            .map(|i| specs[i].reference.clone())
+            .map(|i| specs[i].reference().clone())
             .collect();
         return Err(PatcherError::DependencyCycle(names));
     }

@@ -84,7 +84,7 @@ impl<'r, 'c, 'p: 'r, O: FnMut(RunEvent)> Runner<'r, 'c, 'p, O> {
             if self.run.settled(idx) {
                 continue;
             }
-            let reference = &self.specs[idx].reference;
+            let reference = &self.specs[idx].reference();
             let _span = info_span!("patch", patch = %reference).entered();
             if let Some(status) = self.run.blocked(&self.plan, idx) {
                 self.run

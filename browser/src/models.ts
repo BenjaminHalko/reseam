@@ -60,6 +60,11 @@ export type PatchMetadata = {
    * The presets that select this patch for the inspected APK.
    */
   presets: Array<PatchPreset>;
+  bundle: string;
+  /**
+   * `<package>.<property>` of the public declaration; unique within the bundle.
+   */
+  id: string;
   /**
    * What users see. Different patches may share a display name.
    */
@@ -82,13 +87,13 @@ export type PatchMetadata = {
    * build leaves such a patch out, since it cannot tell what the files hold.
    */
   rewrites_output: boolean;
-  bundle: string;
-  /**
-   * `<package>.<property>` of the public declaration; unique within the bundle.
-   */
-  id: string;
 };
 export type PatchSpec = {
+  bundle: string;
+  /**
+   * `<package>.<property>` of the public declaration; unique within the bundle.
+   */
+  id: string;
   /**
    * What users see. Different patches may share a display name.
    */
@@ -111,19 +116,8 @@ export type PatchSpec = {
    * build leaves such a patch out, since it cannot tell what the files hold.
    */
   rewrites_output: boolean;
-  bundle: string;
-  /**
-   * `<package>.<property>` of the public declaration; unique within the bundle.
-   */
-  id: string;
 };
-export type PatchRef = {
-  bundle: string;
-  /**
-   * `<package>.<property>` of the public declaration; unique within the bundle.
-   */
-  id: string;
-};
+export type PatchRef = string;
 export type PatchPreset = 'recommended' | 'all' | 'none';
 export type Compatibility = { kind: 'universal' } | { kind: 'packages'; packages: Array<CompatiblePackage> };
 export type CompatiblePackage = {

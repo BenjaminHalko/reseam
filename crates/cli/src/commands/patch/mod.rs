@@ -166,7 +166,7 @@ pub(crate) fn run(
         .patches
         .iter()
         .filter(|patch| patch.spec.hidden)
-        .map(|patch| patch.spec.reference.clone())
+        .map(|patch| patch.spec.reference().clone())
         .collect();
     let request = PatchRequest {
         selection: with_options(request.selection, options, &prepared)?,

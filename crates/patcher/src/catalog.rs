@@ -11,7 +11,7 @@ use crate::patch::{PatchRef, PatchSpec};
 /// identify one patch across the loaded bundles for the target package.
 pub struct PatchCatalog<'a> {
     patches: &'a [&'a PatchSpec],
-    references: HashMap<&'a PatchRef, usize>,
+    references: HashMap<PatchRef, usize>,
     ids: HashMap<&'a str, Vec<usize>>,
     names: HashMap<&'a str, Vec<usize>>,
 }
@@ -22,10 +22,10 @@ impl<'a> PatchCatalog<'a> {
         let mut ids: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut names: HashMap<&str, Vec<usize>> = HashMap::new();
         for (index, spec) in patches.iter().enumerate() {
-            if references.insert(&spec.reference, index).is_some() {
-                return Err(BundleError::DuplicatePatch(spec.reference.clone()).into());
+            if references.insert(spec.reference(), index).is_some() {
+                return Err(BundleError::DuplicatePatch(spec.reference()).into());
             }
-            ids.entry(&spec.reference.id).or_default().push(index);
+            ids.entry(&spec.id).or_default().push(index);
             if !spec.hidden {
                 names.entry(&spec.name).or_default().push(index);
             }
@@ -74,7 +74,7 @@ impl<'a> PatchCatalog<'a> {
         }
         let mut references: Vec<_> = candidates
             .iter()
-            .map(|&index| self.patches[index].reference.to_string())
+            .map(|&index| self.patches[index].reference().to_string())
             .collect();
         references.sort_unstable();
         Err(PatcherError::InvalidSelection(format!(
