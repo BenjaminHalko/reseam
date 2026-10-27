@@ -18,8 +18,9 @@ x509-parser = { version = "0.18.1", default-features = false }
 tempfile = { workspace = true }
 
 [dev-dependencies]
-flate2 = { workspace = true }
-zip      = { workspace = true }
+flate2          = { workspace = true }
+reseam-fixtures = { workspace = true }
+zip             = { workspace = true }
 
 [lints]
 workspace = true

@@ -2005,6 +2005,7 @@ dependencies = [
  "rayon",
  "rcgen",
  "reseam-bytes",
+ "reseam-fixtures",
  "reseam-storage",
  "ring",
  "tempfile",

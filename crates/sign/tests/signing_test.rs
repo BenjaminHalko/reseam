@@ -3,11 +3,13 @@
 
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
-use reseam_sign::{SignError, SigningKey, signer_certificates, v2};
+use reseam_sign::{PreservedPairs, SignError, SigningKey, signer_certificates, v2};
 use ring::digest::{self, SHA256};
 use ring::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
 
 const CHUNK_SIZE: usize = 1 << 20;
+const BLOCK_ID_V2: u32 = 0x7109_871a;
+const BLOCK_ID_PADDING: u32 = 0x4272_6577;
 
 #[expect(clippy::unwrap_used, reason = "fixture construction must succeed")]
 fn apk(extra_entries: usize) -> Vec<u8> {
@@ -44,7 +46,7 @@ fn read_all(mut file: &std::fs::File) -> Vec<u8> {
 fn sign(apk: &[u8], key: &SigningKey) -> reseam_sign::Result<Vec<u8>> {
     let file = tempfile::tempfile().unwrap();
     (&file).write_all(apk).unwrap();
-    v2::sign_file_in_place(&file, key)?;
+    v2::sign_file_in_place(&file, key, &PreservedPairs::from_apk(apk)?)?;
     Ok(read_all(&file))
 }
 
@@ -79,16 +81,23 @@ fn layout(apk: &[u8]) -> Layout<'_> {
     }
 }
 
-/// The value of the block's v2 pair.
-fn v2_pair(block: &[u8]) -> &[u8] {
+/// The block's ID-value pairs, in order.
+fn pairs(block: &[u8]) -> Vec<(u32, &[u8])> {
     let mut pairs = &block[8..block.len() - 24];
-    loop {
+    let mut found = Vec::new();
+    while !pairs.is_empty() {
         let len = le_u64(pairs, 0) as usize;
-        if le_u32(pairs, 8) == 0x7109_871a {
-            return &pairs[12..8 + len];
-        }
+        found.push((le_u32(pairs, 8), &pairs[12..8 + len]));
         pairs = &pairs[8 + len..];
     }
+    found
+}
+
+fn v2_pair(block: &[u8]) -> &[u8] {
+    pairs(block)
+        .into_iter()
+        .find_map(|(id, value)| (id == BLOCK_ID_V2).then_some(value))
+        .expect("block has a v2 pair")
 }
 
 fn le_u32(data: &[u8], offset: usize) -> u32 {
@@ -184,10 +193,11 @@ fn signing_and_resigning_preserve_zip_data_and_verify_cryptographically() {
         let source = apk(extra_entries);
         assert!(signer_certificates(&source).unwrap().is_empty());
         let original = layout(&source);
+        let preserved = PreservedPairs::from_apk(&source).unwrap();
         let file = tempfile::tempfile().unwrap();
         (&file).write_all(&source).unwrap();
         for signer in [&key, &large, &key] {
-            v2::sign_file_in_place(&file, signer).unwrap();
+            v2::sign_file_in_place(&file, signer, &preserved).unwrap();
             let actual = read_all(&file);
             verify(&actual, signer);
             let rewritten = layout(&actual);
@@ -200,6 +210,50 @@ fn signing_and_resigning_preserve_zip_data_and_verify_cryptographically() {
             assert_eq!(&data[..2 * CHUNK_SIZE], vec![0xab; 2 * CHUNK_SIZE]);
             assert_eq!(&data[2 * CHUNK_SIZE..], b"last chunk");
         }
+    }
+}
+
+#[test]
+fn resigning_keeps_only_pairs_that_do_not_sign_the_old_contents() {
+    const FROSTING: u32 = 0x2146_444e;
+    const CHANNEL: u32 = 0x7177_7777;
+    let key = SigningKey::generate().unwrap();
+    let large = SigningKey::from_pkcs8(key.pkcs8_der(), large_certificate(&key)).unwrap();
+    let source = reseam_fixtures::with_signing_block(
+        &reseam_fixtures::apk(b"<manifest/>", &[]),
+        &[
+            (BLOCK_ID_V2, b"stale v2"),
+            (FROSTING, b"frosting"),
+            (0xf053_68c0, b"stale v3"),
+            (0x1b93_ad61, b"stale v3.1"),
+            (0x2b09_189e, b"stale stamp v1"),
+            (0x6dff_800d, b"stale stamp v2"),
+            (CHANNEL, b"channel"),
+            (BLOCK_ID_PADDING, &[0; 7]),
+        ],
+    );
+    let signed = sign(&source, &key).unwrap();
+    let resigned = sign(&signed, &large).unwrap();
+    for (apk, signer) in [(&signed, &key), (&resigned, &large)] {
+        verify(apk, signer);
+        let ids: Vec<_> = pairs(layout(apk).block)
+            .into_iter()
+            .map(|(id, value)| {
+                (
+                    id,
+                    (id != BLOCK_ID_V2 && id != BLOCK_ID_PADDING).then_some(value),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                (BLOCK_ID_V2, None),
+                (FROSTING, Some(b"frosting".as_slice())),
+                (CHANNEL, Some(b"channel".as_slice())),
+                (BLOCK_ID_PADDING, None),
+            ]
+        );
     }
 }
 

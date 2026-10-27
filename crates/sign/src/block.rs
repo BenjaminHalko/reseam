@@ -14,7 +14,7 @@ const PAIR_HEADER_LEN: usize = SIZE_LEN + 4;
 
 pub(crate) const BLOCK_ID_V2: u32 = 0x7109_871a;
 pub(crate) const BLOCK_ID_V3: u32 = 0xf053_68c0;
-const BLOCK_ID_PADDING: u32 = 0x4272_6577;
+pub(crate) const BLOCK_ID_PADDING: u32 = 0x4272_6577;
 
 /// Where a signing block starts, read from the footer before the central directory.
 pub(crate) struct BlockEnvelope {
@@ -59,40 +59,72 @@ impl BlockEnvelope {
 /// for a missing ID. Invalid pair lengths before the match are errors. As on
 /// Android, pairs following the first match are not interpreted.
 pub(crate) fn find_pair(block: &[u8], id: u32) -> Result<Option<&[u8]>> {
-    let mut pairs = Reader::new(
-        &block[SIZE_LEN..block.len() - FOOTER_LEN],
-        "signing block pairs",
-    );
-    while !pairs.is_empty() {
-        let len = usize::try_from(pairs.u64()?)
-            .map_err(|_| invalid("signing block", "pair length exceeds address space"))?;
-        if len < 4 {
-            return Err(invalid("signing block", "pair length excludes its ID"));
-        }
-        let mut pair = Reader::new(pairs.take(len)?, "signing pair");
-        if pair.u32()? == id {
-            return Ok(Some(pair.take(len - 4)?));
+    for pair in pairs(block) {
+        let pair = pair?;
+        if pair.id == id {
+            return Ok(Some(pair.value));
         }
     }
     Ok(None)
 }
 
-/// The length of a block holding one pair of `value_len` bytes and padding.
-pub(crate) const fn len_for(value_len: usize) -> usize {
-    SIZE_LEN + 2 * PAIR_HEADER_LEN + value_len + FOOTER_LEN
+pub(crate) struct Pair<'a> {
+    pub(crate) id: u32,
+    value: &'a [u8],
+    /// The whole pair, with its length and ID fields.
+    pub(crate) encoded: &'a [u8],
 }
 
-/// A block of exactly `len` bytes holding `value` under `id`, filled out
-/// with a padding pair.
-pub(crate) fn write(id: u32, value: &[u8], len: usize) -> Result<Vec<u8>> {
+/// The pairs of a validated block in order, ending after the first malformed one.
+pub(crate) fn pairs(block: &[u8]) -> impl Iterator<Item = Result<Pair<'_>>> {
+    let mut pairs = Reader::new(
+        &block[SIZE_LEN..block.len() - FOOTER_LEN],
+        "signing block pairs",
+    );
+    let mut failed = false;
+    std::iter::from_fn(move || {
+        if failed || pairs.is_empty() {
+            return None;
+        }
+        let pair = next_pair(&mut pairs);
+        failed = pair.is_err();
+        Some(pair)
+    })
+}
+
+fn next_pair<'a>(pairs: &mut Reader<'a>) -> Result<Pair<'a>> {
+    let remaining = pairs.data;
+    let len = usize::try_from(pairs.u64()?)
+        .map_err(|_| invalid("signing block", "pair length exceeds address space"))?;
+    if len < 4 {
+        return Err(invalid("signing block", "pair length excludes its ID"));
+    }
+    let mut pair = Reader::new(pairs.take(len)?, "signing pair");
+    Ok(Pair {
+        id: pair.u32()?,
+        value: pair.take(len - 4)?,
+        encoded: &remaining[..SIZE_LEN + len],
+    })
+}
+
+/// The length of a block holding one pair of `value_len` bytes, `kept_len`
+/// bytes of other encoded pairs, and padding.
+pub(crate) const fn len_for(value_len: usize, kept_len: usize) -> usize {
+    SIZE_LEN + 2 * PAIR_HEADER_LEN + value_len + kept_len + FOOTER_LEN
+}
+
+/// A block of exactly `len` bytes holding `value` under `id`, then the encoded
+/// pairs `kept`, filled out with a padding pair.
+pub(crate) fn write(id: u32, value: &[u8], kept: &[u8], len: usize) -> Result<Vec<u8>> {
     let padding = len
-        .checked_sub(len_for(value.len()))
+        .checked_sub(len_for(value.len(), kept.len()))
         .ok_or_else(|| invalid("signing block", "signature exceeds reserved block length"))?;
     let size = ((len - SIZE_LEN) as u64).to_le_bytes();
     let mut block = Vec::with_capacity(len);
     block.extend_from_slice(&size);
     write_pair_header(&mut block, id, value.len());
     block.extend_from_slice(value);
+    block.extend_from_slice(kept);
     write_pair_header(&mut block, BLOCK_ID_PADDING, padding);
     block.resize(block.len() + padding, 0);
     block.extend_from_slice(&size);

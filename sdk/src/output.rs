@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use reseam_apk::{ApkFile, ApkWriteOptions};
 use reseam_patcher::output::WrittenApk;
-use reseam_sign::SigningKey;
+use reseam_sign::{PreservedPairs, SigningKey};
 
 use crate::error::{HostError, Result, file_error};
 use crate::metrics::PatchProfiler;
@@ -36,8 +36,14 @@ pub(crate) fn resolve_output(output: &PatchOutput, components: usize) -> Result<
 /// Unsigned output staged beside its destinations, waiting to be signed.
 pub(crate) struct StagedOutput {
     publication: Publication,
-    components: Vec<String>,
+    components: Vec<StagedComponent>,
     key: SigningKey,
+}
+
+struct StagedComponent {
+    name: String,
+    /// Signing block pairs the source carried, which the new signature keeps.
+    preserved: PreservedPairs,
 }
 
 /// Writes `apk` unsigned into a staging directory beside its destinations and
@@ -66,8 +72,17 @@ pub(crate) fn stage_unsigned(
     let components = apk
         .components()
         .iter()
-        .map(|component| component.name().to_owned())
-        .collect();
+        .map(|component| {
+            let source = component.source().map_err(|source| HostError::Apk {
+                path: component.path().to_owned(),
+                source,
+            })?;
+            Ok(StagedComponent {
+                name: component.name().to_owned(),
+                preserved: PreservedPairs::from_apk(&source)?,
+            })
+        })
+        .collect::<Result<_>>()?;
     let unsigned = profiler
         .measure(PatchPhase::WriteUnsignedArtifacts, || {
             apk.write_unsigned_files(ApkWriteOptions::default(), dir)
@@ -106,7 +121,7 @@ impl StagedOutput {
         WrittenApk::new(
             self.components
                 .iter()
-                .cloned()
+                .map(|component| component.name.clone())
                 .zip(
                     self.publication
                         .artifacts()
@@ -123,7 +138,8 @@ impl StagedOutput {
             self.publication
                 .artifacts()
                 .iter()
-                .try_for_each(|artifact| {
+                .zip(&self.components)
+                .try_for_each(|(artifact, component)| {
                     let file = File::options()
                         .read(true)
                         .write(true)
@@ -131,7 +147,7 @@ impl StagedOutput {
                         .map_err(|source| {
                             file_error("open APK to sign", artifact.destination(), source)
                         })?;
-                    reseam_sign::v2::sign_file_in_place(&file, &self.key)?;
+                    reseam_sign::v2::sign_file_in_place(&file, &self.key, &component.preserved)?;
                     Ok::<_, HostError>(())
                 })
         })?;

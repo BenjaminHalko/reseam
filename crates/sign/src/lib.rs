@@ -6,9 +6,11 @@ pub mod certificates;
 mod credentials;
 mod error;
 mod key;
+mod preserved;
 pub mod v2;
 mod zip_layout;
 
 pub use certificates::signer_certificates;
 pub use error::{Result, SignError};
 pub use key::SigningKey;
+pub use preserved::PreservedPairs;

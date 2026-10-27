@@ -92,6 +92,39 @@ fn containers_and_plain_apks_use_the_same_output_pipeline() {
 }
 
 #[test]
+fn output_keeps_the_source_signing_block_pairs_that_are_not_signatures() {
+    let tmp = ScratchDir::new("sdk-signing-block").unwrap();
+    let input = tmp.path().join("input.apk");
+    std::fs::write(
+        &input,
+        reseam_fixtures::with_signing_block(
+            &apk(""),
+            &[(0x7109_871a, b"stale v2"), (0x2146_444e, b"frosting")],
+        ),
+    )
+    .unwrap();
+    let destination = tmp.path().join("output.apk");
+    let opened = OpenedApk::open(&input, &[]).unwrap();
+    let output = PatchArtifact::SingleFile {
+        path: destination.display().to_string(),
+    };
+    publish(opened.apk, &output, None).unwrap();
+    let signed = std::fs::read(&destination).unwrap();
+    let contains = |value: &[u8]| signed.windows(value.len()).any(|window| window == value);
+    assert!(contains(b"frosting"));
+    assert!(!contains(b"stale v2"));
+    let key = reseam_sign::SigningKey::load_or_generate(
+        &destination.with_extension("pk8"),
+        &destination.with_extension("der"),
+    )
+    .unwrap();
+    assert_eq!(
+        reseam_sign::signer_certificates(&signed).unwrap(),
+        [key.certificate_der()]
+    );
+}
+
+#[test]
 fn invalid_artifact_targets_preserve_outputs_and_signing_identity() {
     let tmp = ScratchDir::new("sdk-publication").unwrap();
     let base = tmp.path().join("base.apk");
