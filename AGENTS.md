@@ -31,7 +31,7 @@ The crates, from the bottom up. Lower crates don't depend on higher ones, and cr
 - Read the code around what you're changing first, and write in the same style.
 - Check whether something already does what you need before you write it. If it does, use it or extend it.
 - Fix the actual cause. Don't add a special case for one input, a flag, a retry or a temporary workaround. Someone has to clean those up later.
-- Update everything your change affects in the same change: Rust, Kotlin and TypeScript callers, `../patches`, generated bindings, docs and tests. Don't leave old and new versions side by side or add compatibility shims.
+- Update everything your change affects in the same change: Rust, Kotlin and TypeScript callers, `../patches`, generated bindings, docs (see [Docs](#docs)) and tests. Don't leave old and new versions side by side or add compatibility shims.
 - Think about where the code belongs before writing it. If a file would end up doing two things, split it first. If you'd be writing the same logic a second time, pull it out and share it.
 - Remove anything your change leaves unused.
 
@@ -68,6 +68,34 @@ The crates, from the bottom up. Lower crates don't depend on higher ones, and cr
 
 - Only comment to explain something the code can't show, like a platform quirk or a format rule. Don't describe what the code does. The patch API needs doc comments, and so does any public item whose behavior isn't clear from its signature.
 - Write tests for behavior users rely on. When you test the same thing with several inputs, use one table-driven test. Use `reseam-fixtures` and the shared test helpers for inputs, and test through the public API.
+
+## Docs
+
+The docs are published at reseam.app/docs, and patch authors rely on them. Keep them true to the code in the same change.
+
+**When to update them.** Any change that adds, removes, renames or changes the behavior of something authors or CLI users see: a patch API type or member, an app runtime member, a Gradle plugin setting, a CLI command or flag, an error message the docs quote, or a default. Update every page that mentions it:
+
+- `docs/reference*.md` for the patch API, the app runtime (`reference_runtime.md`) and the Gradle plugin (`reference_gradle.md`).
+- The guide page in `docs/` that explains the feature, plus `troubleshooting.md` and `glossary.md` when they cover it.
+- `crates/cli/docs/` for the CLI, checked against `reseam <command> --help`.
+- The crate `README.md` and `docs/internals/` when you move or rename files they name.
+
+**Check claims against the code.** Read the implementation before you describe behavior, and don't document what you can't confirm. A Kotlin code sample must compile against the current API, with its imports: hooks such as `before` and `point` are extension functions and need one.
+
+**Reference structure.** Every public type gets its own ``### `Type` `` heading, or a row naming it in a table of related records. Under it, one sentence on what the type is for, then a `| Member | Description |` table: the full signature with parameter types, defaults and the return type, and one or two sentences on what it does and when it fails. Extension functions go in a function table on the page of the type they extend. Generated types nobody can reach from public API stay out.
+
+**Guide structure.** Each page follows the same order: what the page is for in one or two sentences, the smallest working example, what each part does, variations, a "Things to know" list of pitfalls, then `Next: [Page](file.md).` Keep the `description:` frontmatter accurate. Pages are numbered for order (`9_testing.md`); the URL is the name without the number, so renumbering is safe but renaming isn't. Link to other pages by file name, and to headings by their anchor. Add a new page to `docs/README.md`.
+
+**Tone.** Write the way you'd explain it to another developer: plain words, full sentences, and "you" for the reader.
+
+- Say why before the rule: "Pin your keys before the first release. If you rename the property, the key changes and users lose the value."
+- One idea per paragraph, and short paragraphs. Split a paragraph that packs several facts.
+- Use the terms from `docs/glossary.md`, and add a term there when a page needs a new one.
+- Examples use the imaginary `com.example.app` and realistic names, 4-space indented Kotlin in the style of `../patches`.
+- Use `> [!WARNING]` only for mistakes that cost users data or silently break a patch.
+- No em-dashes, no "not X, but Y", no sentences that are fragments joined by colons and semicolons, no filler ("simply", "just", "easily", "powerful"), and no explaining what a developer already knows.
+
+**Before you call it done.** Check that every page you touched renders and that its links resolve: run `bun run docs:local` in `../website` and open the pages. For a new or changed sample, compile it in a copy of `../patches-template` built against your engine with `RESEAM_WORKSPACE`.
 
 ## Maintainability checks with Entanglement
 
