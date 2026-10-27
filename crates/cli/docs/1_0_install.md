@@ -51,4 +51,6 @@ Logs go to stderr. By default you see progress, the result of each patch, warnin
 RUST_LOG=debug reseam patch app.apk --bundle patches.reseam --trust <key>
 ```
 
+To see your patches' `log.debug` messages and the method each target picked, without the engine's own debug output, use `RUST_LOG=info,reseam=debug`.
+
 `RESEAM_JVM_HEAP` sets the memory limit of the Java runtime that runs patches (default `256m`).

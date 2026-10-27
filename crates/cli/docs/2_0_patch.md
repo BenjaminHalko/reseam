@@ -26,7 +26,7 @@ The run starts from the patches made for this app that are on by default. Change
 
 Name a patch by its display name, its ID, or its full reference `<bundle>/<id>`; `reseam bundle list` shows all three. If a name matches several patches, the error lists their references so you can pick one.
 
-Patches that work on any app are never in a preset; add them with `--enable`. A patch made for other versions of the app is skipped; `--ignore-versions` runs it anyway.
+Patches that work on any app start switched off, unless their author enabled them by default. Add them with `--enable`. A patch made for other versions of the app is skipped, and `--ignore-versions` runs it anyway.
 
 ```bash
 reseam patch app.apk --bundle patches.reseam --trust <key> \
@@ -60,7 +60,19 @@ Pass extra splits with `--split`, or give an `.apkm` or `.xapk` file directly. X
 | One APK | `<name>-patched.apk` next to the input |
 | Several APKs | a `<name>-patched/` folder next to the input |
 
-`--output <file>` sets the file for a single APK. `--output-dir <dir>` sets the folder and works for either. The output is only written if no selected patch failed. `--dry-run` checks everything without patching or writing.
+`--output <file>` sets the file for a single APK. `--output-dir <dir>` sets the folder, and works for either.
+
+`--dry-run` checks the bundles, the selection, and the options without running any patch or writing anything. Targets are only searched when patches run, so a dry run doesn't tell you whether they match.
+
+## When a patch fails
+
+If any selected patch fails, `reseam patch` writes nothing, and exits with an error that names the failed patches.
+
+To get an APK anyway, add `--leave-out-failed`. The output then leaves out the failed patches, and every patch that depends on them, as if you had never selected them.
+
+```bash
+reseam patch app.apk --bundle patches.reseam --trust <key> --leave-out-failed
+```
 
 ## Mount builds
 
@@ -93,4 +105,5 @@ reseam patch app.apk --bundle patches.reseam --trust <key> \
 | `--output-dir <dir>` | output folder |
 | `--key <pk8>`, `--cert <der>` | signing key and certificate, together |
 | `--mount` | build for mounting over the installed app; leaves out patches that edit the manifest |
-| `--dry-run` | check without patching or writing |
+| `--leave-out-failed` | write the output without failed patches and the patches that need them |
+| `--dry-run` | check the bundles, selection, and options, without patching or writing |

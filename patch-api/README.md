@@ -12,10 +12,13 @@ To write patches, start from the [patch bundle template](https://git.reseam.app/
 
 | Package | Contents |
 |---|---|
-| `app.reseam.patch` | What patch authors use. `Patch.kt` declares patches. `Targets.kt`, `Query.kt`, and `Point.kt` find code. `Code.kt` and `Hooks.kt` change it, and `emit/` records code blocks over temporaries that the engine places in registers. `Scopes.kt` covers the manifest, resources, files, and XML. `Options.kt` and `settings/` cover user settings. `Bindings.kt` reads obfuscated objects. |
+| `app.reseam.patch` | What patch authors use, one concern per file. `Patch.kt` and `Options.kt` declare patches. `MethodTargets.kt`, `ClassTargets.kt`, `FieldTargets.kt`, `QueryDsl.kt`, `Points.kt`, `PointTargets.kt`, and `PointDsl.kt` find code. `Code.kt`, `Hooks.kt`, `Extensions.kt`, and `CallRedirects.kt` change it. `ManifestScope.kt`, `ResourceScope.kt`, `FileScope.kt`, `Xml.kt`, and `BytecodeScope.kt` cover the rest of the APK. `Bindings.kt` reads obfuscated objects. `Hermes.kt`, `JsFunctions.kt`, `JsCode.kt`, and `JsExtensions.kt` cover Hermes. |
+| `app.reseam.patch.settings` | Settings, the settings host, gates, and brands. |
 | `app.reseam.patch.dex` | Raw bytecode access: `Method`, `DexClass`, `Opcode`, `InstructionBuilder`. |
 | `app.reseam.patch.types` | Generated data types such as `Instruction` and `MethodRef`. Authors use these too. |
-| `app.reseam.patch.native` | Generated calls into the engine. Only the handwritten code uses them. |
+| `app.reseam.patch.native` | Generated calls into the engine, all `internal`. Only the handwritten code uses them. |
+
+The internals behind the public files live in `run/` (the running patch), `search/` (target queries), `points/` (instruction matching), `emit/` (code blocks, recorded over temporaries that the engine places in registers), and `binding/` (binding paths).
 
 Handwritten code lives in `src/main/kotlin/app/reseam/patch/`. Everything under `generated/` is BoltFFI output: never edit it by hand.
 

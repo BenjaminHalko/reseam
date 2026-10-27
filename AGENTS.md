@@ -20,7 +20,7 @@ The crates, from the bottom up. Lower crates don't depend on higher ones, and cr
 ## Docs worth reading
 
 - `README.md` for the layout, building and releasing.
-- `docs/` is the guide for patch authors. `docs/reference.md` lists the whole patch API and has to match `patch-api`.
+- `docs/` is the guide for patch authors. The `docs/reference*.md` pages list the whole patch API and app runtime, and have to match `patch-api` and `app-runtime`.
 - Each crate's `README.md`, and `crates/patcher/ARCHITECTURE.md` for how a patch run works.
 - `docs/internals/boltffi.md` explains how Rust and the Kotlin patch API talk to each other.
 - `crates/cli/docs/` covers the CLI.

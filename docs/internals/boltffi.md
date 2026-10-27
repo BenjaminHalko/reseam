@@ -14,7 +14,7 @@ Reseam uses BoltFFI for two Kotlin surfaces: the application SDK that Reseam Man
 | `crates/patcher` | Patch execution, the `#[export]` patch API, and per-bundle native registration |
 | `sdk` | The application service: trust, input lifetime, output, signing, profiling |
 | `sdk/native` | The `#[export]` application surface over `sdk` |
-| `xtask/src/patch_api.rs` | Patch bridge generation from Binding IR |
+| `xtask/src/patch_api/` | Patch bridge generation from Binding IR |
 | `sdk-kotlin` | Packaging generated Kotlin and BoltFFI-built native libraries for Android and JVM |
 
 `sdk/native` is a separate crate because BoltFFI folds the exports of every direct dependency into a binding root. `sdk` depends on the patcher, so exporting from `sdk` would pull the patch API into the application SDK.
@@ -38,7 +38,7 @@ Each bundle jar carries its own copy of the patch runtime.
 
 The engine loads a bundle in a class loader whose parent is the host's: the app's loader on Android, the system loader on the JVM. When the host ships `reseam-patch-sdk`, as Reseam Manager does through `reseam-sdk`, every bundle resolves the host's `Native` class, and the generated loader's `System.loadLibrary` finds the SDK library already loaded. When it does not, as in the CLI, the bundle's own copy is used and the generated loader does nothing. The engine registers the bridge on whichever `Native` class the bundle resolved.
 
-BoltFFI generates JNI entry points as exported symbols for the JVM to resolve by name. That fails for a class loaded outside the library's loader, and for symbols inside the CLI executable. `xtask/src/patch_api.rs` therefore derives a `RegisterNatives` table from the same Binding IR contract that produced the C glue. It also narrows the IR to declarations reachable from the patcher's exports, since dependency crates carry application models the patch API never sees, and configures the generated loader to load the SDK library on Android and nothing on desktop.
+BoltFFI generates JNI entry points as exported symbols for the JVM to resolve by name. That fails for a class loaded outside the library's loader, and for symbols inside the CLI executable. `xtask/src/patch_api/registration.rs` therefore derives a `RegisterNatives` table from the same Binding IR contract that produced the C glue. It also narrows the IR to declarations reachable from the patcher's exports, since dependency crates carry application models the patch API never sees, and configures the generated loader to load the SDK library on Android and nothing on desktop.
 
 The patcher is a second binding root. BoltFFI emits exported functions only for the crate it generates bindings for, so `crates/patcher/build.rs` sets the expansion environment for its own crate in every build except BoltFFI's metadata builds. Without it, the SDK library and the CLI would link a patch bridge that references missing symbols.
 

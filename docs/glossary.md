@@ -4,29 +4,45 @@ description: The words used across these docs.
 
 # Glossary
 
-**APK**: the file an Android app is installed from. Apps from stores often come as split APKs, or bundled as an **APKM** or **XAPK** file.
+**APK**: the file an Android app is installed from. Apps from stores often come as split APKs, or bundled into one **APKM** or **XAPK** file.
 
-**Bundle**: a signed `.reseam` file with patches and extensions. The unit you publish and users trust.
+**App runtime**: code the engine adds to a patched app the first time a patch uses it. It holds the settings screen, the settings storage, and the branded components extensions build with. Bundles share one copy.
 
-**Code block**: the `{ }` after `before`, `after`, or `replace`, where you describe code to add to the app.
+**Binding**: a path through obfuscated objects, such as `post.attributes.videos[0].getUrl()`, described by structure so code blocks can read it. See [Reading obfuscated objects](12_bindings.md).
+
+**Bundle**: a signed `.reseam` file with patches and extensions. The unit you publish, and users trust.
+
+**Capture**: a value a point saves with `captureAs`, for code blocks to read with `capture(name)`.
+
+**Code block**: the `{ }` after `before`, `after`, or `replace`, where you describe code to add to the app. It runs while patching, and each call in it adds instructions.
+
+**Component**: one APK of an app that ships as several. `components()` lists them.
 
 **DEX**: the bytecode format inside an APK.
 
 **Engine**: the part of Reseam that applies a bundle to an APK. It runs in Reseam Manager, the CLI, and the browser patcher.
 
-**Extension**: Kotlin code in a bundle that patches add to the app.
+**Extension**: Kotlin or JavaScript code in a bundle that patches add to the app.
 
-**Gate**: patched code that checks a setting while the app runs.
+**Gate**: a group of hooks that only take effect while a toggle setting is on.
+
+**Hermes**: the JavaScript engine of React Native apps, which ship their code as Hermes bytecode.
+
+**Hook**: code a patch adds at a target: `before`, `after`, `replace`, or a constant return.
 
 **Internal patch**: a patch with no name. It only runs as a dependency of another patch.
 
-**Obfuscation**: renaming an app's classes and methods to short meaningless names. It changes with every release, which is why patches use targets.
+**Mount build**: output that is mounted over the app installed from the store on a rooted phone, instead of installed as its own app. It leaves out patches that edit the manifest.
+
+**Obfuscation**: renaming an app's classes and methods to short, meaningless names. The names change with every release, which is why patches use targets.
 
 **Option**: a value the user sets before patching.
 
-**`patches.json`**: the index of a bundle's releases, download links, and public key. Users add it to Reseam Manager to get updates.
+**`patches.json`**: the index of a bundle's releases, download links, and public key. Reseam Manager reads it to get updates.
 
-**Point**: one instruction inside a method.
+**Point**: one instruction inside a method, found by matching.
+
+**Preset**: the starting selection of patches. `recommended` is the patches for the app that are on by default.
 
 **Reference**: a patch's full identifier, `<bundle>/<id>`.
 
@@ -34,10 +50,12 @@ description: The words used across these docs.
 
 **Setting**: a value the user can change inside the patched app: a toggle, text, a folder, or a choice.
 
+**Settings host**: the internal patch that adds a bundle's settings screen to one app.
+
 **Signer**: the key a bundle is signed with. Users trust signers, not bundles.
 
 **Split APK**: one part of an app that ships as several APK files.
 
-**Target**: a description of a method, class, or field that Reseam searches the app for.
+**Target**: a description of a method, class, field, or function that Reseam searches the app for.
 
-**Universal patch**: a patch with no `compatibleWith`. It works on any app and is selected by default only when its author calls `enabledByDefault(true)`.
+**Universal patch**: a patch with no `compatibleWith`. It works on any app, and starts switched off unless its author calls `enabledByDefault(true)`.

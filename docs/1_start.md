@@ -4,14 +4,14 @@ description: Copy the template, build it, and run its patches on an app.
 
 # Start a bundle
 
-A bundle is the file you publish: your patches, plus any code they add to apps. The fastest way to start one is the [patch bundle template](https://git.reseam.app/reseam/patches-template). It builds as it is and comes with two working patches.
+A bundle is the file you publish. It holds your patches, and any Kotlin code they add to apps. The quickest way to start one is the [patch bundle template](https://git.reseam.app/reseam/patches-template), which builds as it is and comes with two working patches.
 
 ## What you need
 
-- JDK 17.
-- The Android SDK, with `ANDROID_HOME` set to its folder. The build compiles your Kotlin extension code against the newest `platforms/android-*/android.jar` it finds there.
-- The `reseam` CLI, on your `PATH`. Use the version that matches the plugin version in the template's `settings.gradle.kts`. See [Install](/docs/cli/install/).
-- Git.
+- **JDK 17.**
+- **The Android SDK**, with `ANDROID_HOME` set to its folder. The build compiles your extension code against the newest `platforms/android-*/android.jar` it finds there.
+- **The `reseam` CLI**, on your `PATH`. Use the version that matches the plugin version in the template's `settings.gradle.kts`. See [Install](/docs/cli/install/).
+- **Git.**
 
 ## 1. Copy the template
 
@@ -23,28 +23,30 @@ cd my-patches
 The template contains:
 
 ```text
-manifest.toml          bundle name, author, description
-settings.gradle.kts    Reseam plugin version
-apps/example/patch/    two example patches in Kotlin
+manifest.toml          the bundle's name, author, and description
+settings.gradle.kts    the Reseam plugin version
+apps/example/patch/    two example patches
 apps/example/extensions/screenshots/
-                       Kotlin code one of them adds to the app
-.github/workflows/     a release workflow for GitHub
+                       Kotlin code one of the patches adds to the app
+.github/workflows/     a release workflow
 ```
 
-The example patches work on any app:
+Both example patches work on any app:
 
-- **Enable debugging** marks the app debuggable in its manifest.
-- **Allow screenshots** sends the app's "block screenshots" calls to Kotlin code from the bundle, which strips that flag.
+- **Enable debugging** marks the app debuggable in its manifest, so `adb` can attach to it.
+- **Allow screenshots** sends the app's "block screenshots" calls to Kotlin code from the bundle, which removes that flag.
 
 ## 2. Make a signing key
 
-Every bundle is signed. Users trust your public key once, and Reseam refuses bundles that don't match it.
+Every bundle is signed. Users trust your public key once, and Reseam refuses any bundle that isn't signed with a key they trust. Make yours:
 
 ```bash
 reseam bundle keygen --out ~/.reseam/bundle-signing.key
 ```
 
-It prints the public key; `reseam bundle pubkey --key <file>` prints it again later. Keep the key file private and out of the repository; the build reads it from this path.
+It prints the public key. You can print it again later with `reseam bundle pubkey --key ~/.reseam/bundle-signing.key`.
+
+Keep the key file private, and out of the repository. The build reads it from this path. Back it up too: if you lose it, every user has to trust a new key.
 
 ## 3. Build
 
@@ -68,7 +70,7 @@ reseam patch app.apk \
   --output patched.apk
 ```
 
-`--enable` is needed because patches that work on any app are off until you pick them. Install the result with `adb install patched.apk`.
+The example patches work on any app, so they start switched off, and `--enable` turns one on. Install the result with `adb install patched.apk`. If the app is already installed from a store, uninstall it first: Android only installs an update signed with the same key as the installed app.
 
 ## 5. Make it yours
 

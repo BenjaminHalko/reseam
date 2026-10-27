@@ -23,6 +23,14 @@ Ed25519 keypair generated
 
 Users trust that public key. It never overwrites an existing file. Keep the key file private and backed up.
 
+## `reseam bundle pubkey`
+
+```bash
+reseam bundle pubkey --key ~/.reseam/bundle-signing.key
+```
+
+Prints the public key of a key file `keygen` made, for when you need it again.
+
 ## `reseam bundle list`
 
 ```bash
