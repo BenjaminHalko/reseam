@@ -24,7 +24,10 @@ impl WritePlan<'_> {
         let interfaces = match &self.classes[k] {
             WriteClass::Resident(class) => class.interfaces.clone(),
             WriteClass::Raw(raw) if raw.interfaces_off != 0 => {
-                crate::file::read_type_list(self.raw_bytes(), raw.interfaces_off as usize)
+                crate::read::type_list::read_type_list(
+                    self.raw_bytes(),
+                    raw.interfaces_off as usize,
+                )
             }
             WriteClass::Raw(_) => TypeList::new(),
         };
@@ -35,7 +38,7 @@ impl WritePlan<'_> {
         &self,
         k: usize,
     ) -> Result<Option<Cow<'_, AnnotationsDirectory>>> {
-        if self.options.annotations == super::super::MetadataPolicy::Omit {
+        if self.options.annotations == crate::options::MetadataPolicy::Omit {
             return Ok(None);
         }
         match &self.classes[k] {
@@ -43,9 +46,7 @@ impl WritePlan<'_> {
                 .annotations
                 .as_deref()
                 .filter(|metadata| {
-                    self.options
-                        .annotations
-                        .keeps(metadata, self.dex.raw.as_ref())
+                    metadata.kept_by(self.options.annotations, self.dex.raw.as_ref())
                 })
                 .map(|metadata| {
                     let dir = metadata.read()?;
@@ -61,7 +62,7 @@ impl WritePlan<'_> {
                 .transpose(),
             WriteClass::Raw(raw) => {
                 if raw.annotations_off == 0
-                    || self.options.annotations != super::super::MetadataPolicy::Preserve
+                    || self.options.annotations != crate::options::MetadataPolicy::Preserve
                 {
                     return Ok(None);
                 }

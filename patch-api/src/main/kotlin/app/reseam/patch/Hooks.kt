@@ -1,54 +1,39 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-@file:Suppress("unused")
-
 package app.reseam.patch
 
 import app.reseam.patch.dex.Method
-import app.reseam.patch.dex.Opcode
+import app.reseam.patch.dex.arguments
 import app.reseam.patch.dex.buildInstructions
 import app.reseam.patch.dex.descriptor
+import app.reseam.patch.dex.growLocals
 import app.reseam.patch.dex.methodRef
 import app.reseam.patch.dex.opcode
-import app.reseam.patch.dex.rangeVariant
+import app.reseam.patch.dex.registerWordCount
+import app.reseam.patch.emit.EmittedCode
+import app.reseam.patch.emit.builtBy
+import app.reseam.patch.emit.emitInvoke
+import app.reseam.patch.emit.insertCode
 import app.reseam.patch.native.appEntryHook
+import app.reseam.patch.points.ArgumentOrigins
+import app.reseam.patch.run.ActiveRuntime
+import app.reseam.patch.run.edits
+import app.reseam.patch.types.CodePlacement
 
 /** Runs `block` when the method is entered. */
-fun MethodTarget.before(block: CodeScope.() -> Unit) =
-    method.insertCode(method.edits?.entry(method) ?: 0, emptyList(), block)
+fun MethodTarget.before(block: CodeScope.() -> Unit) = method.insertCode(method.entry, block)
+
+/** The start of the method, past the code that initializes its reserved locals. */
+private val Method.entry: CodePlacement
+    get() = CodePlacement.Before((edits?.entry(this) ?: 0).toUInt())
 
 /**
  * Runs `block` before every return; [CodeScope.result] is the value being returned. Referenced
  * parameters and `thisObject` are saved at entry, before the body can reuse their registers.
  */
-fun MethodTarget.after(block: CodeScope.() -> Unit) {
-    val target = method
-    val insns = target.instructions
-    val returns = insns.indices.filter { insns[it].opcode?.isReturn == true }
-    val snapshots = mutableMapOf<Int, EntrySnapshot>()
-    for (ordinal in returns.indices.reversed()) {
-        // Lowering during frame growth can expand earlier instructions. Newly
-        // emitted returns follow every original return still to be processed.
-        val current = target.instructions
-        val index = current.indices.filter { current[it].opcode?.isReturn == true }[ordinal]
-        val returned =
-            if (target.returnType == Type.Void) null
-            else Capture("result", target.returnType, target.registerA(index))
-        target.insertCode(index, emptyList(), block, snapshots, returned)
-    }
-    if (snapshots.isNotEmpty()) {
-        val incomingBase = target.registersSize - target.insSize
-        target.insertInstructions(
-            0,
-            buildInstructions {
-                for (snapshot in snapshots.values) {
-                    moveTyped(snapshot.register, incomingBase + snapshot.offset, snapshot.type)
-                }
-            },
-        )
-    }
-}
+fun MethodTarget.after(block: CodeScope.() -> Unit) =
+    method.insertCode(CodePlacement.BeforeReturns, block)
 
 /** Code [appEntry] adds: a [CodeScope] with the app's `Application` as [application]. */
 interface AppEntryScope : CodeScope {
@@ -62,7 +47,7 @@ interface AppEntryScope : CodeScope {
  */
 fun appEntry(block: AppEntryScope.() -> Unit) {
     val hook = Method(appEntryHook())
-    hook.insertCode(hook.edits?.entry(hook) ?: 0, emptyList(), { AppEntryCode(this).block() })
+    hook.insertCode(hook.entry, { AppEntryCode(this).block() })
 }
 
 private class AppEntryCode(code: CodeScope) : AppEntryScope, CodeScope by code {
@@ -72,7 +57,7 @@ private class AppEntryCode(code: CodeScope) : AppEntryScope, CodeScope by code {
 }
 
 /** Replaces the method body with `block`. */
-fun MethodTarget.replace(block: CodeScope.() -> Unit) = method.replaceCode(block)
+fun MethodTarget.replace(block: CodeScope.() -> Unit) = method.insertCode(CodePlacement.Body, block)
 
 /**
  * Reserves a register shared across this method's code blocks, accessed as `local(slot)`. Grows the
@@ -95,22 +80,50 @@ fun MethodTarget.reserveLocal(name: String, type: String): MethodLocal {
     return local
 }
 
-fun MethodTarget.alwaysReturn() = method.alwaysReturn()
+/** A method-wide register reserved by [MethodTarget.reserveLocal], accessed as `local(slot)`. */
+class MethodLocal
+internal constructor(
+    val name: String,
+    val type: String,
+    internal val method: Method,
+    register: Int,
+) {
+    internal var register: Int = register
+        private set
 
-fun MethodTarget.alwaysReturn(value: Boolean) = method.alwaysReturn(value)
+    internal var lost: Boolean = false
+        private set
 
-fun MethodTarget.alwaysReturn(value: Int) = method.alwaysReturn(value)
+    internal fun relocate(base: Int, additional: Int) {
+        if (register >= base) register += additional
+    }
 
-fun MethodTarget.alwaysReturn(value: Long) = method.alwaysReturn(value)
+    internal fun invalidate() {
+        lost = true
+    }
 
-fun MethodTarget.alwaysReturn(value: String) = method.alwaysReturn(value)
+    internal val wordCount: Int = registerWordCount(type)
 
-fun MethodTarget.alwaysReturnNull() = method.alwaysReturnNull()
+    override fun toString(): String = "$name: $type in ${method.descriptor}"
+}
 
-fun MethodTarget.replaceAllStrings(old: String, new: String): Int =
-    method.replaceAllStrings(old, new)
+/** Replaces the method body with `return`. */
+fun MethodTarget.alwaysReturn() = replace { returnVoid() }
 
-fun MethodTarget.replaceAllLiterals(old: Long, new: Long): Int = method.replaceAllLiterals(old, new)
+/** Replaces the method body with `return value`. */
+fun MethodTarget.alwaysReturn(value: Boolean) = replace { returnValue(bool(value)) }
+
+/** Replaces the method body with `return value`. */
+fun MethodTarget.alwaysReturn(value: Int) = replace { returnValue(int(value)) }
+
+/** Replaces the method body with `return value`. */
+fun MethodTarget.alwaysReturn(value: Long) = replace { returnValue(long(value)) }
+
+/** Replaces the method body with `return value`. */
+fun MethodTarget.alwaysReturn(value: String) = replace { returnValue(string(value)) }
+
+/** Replaces the method body with `return null`. */
+fun MethodTarget.alwaysReturnNull() = replace { returnNull() }
 
 /**
  * Runs `block` just before the instruction at the point, after anything an earlier block put there.
@@ -119,10 +132,9 @@ fun MethodTarget.replaceAllLiterals(old: Long, new: Long): Int = method.replaceA
 fun PointTarget.before(block: CodeScope.() -> Unit) {
     val point = resolved
     point.method.insertCode(
-        point.anchor.head,
-        point.captures,
+        CodePlacement.OnEveryPath(point.anchor.head.toUInt()),
         block,
-        branches = InsertionBranches.RUN_INSERTION,
+        point.captures,
     )
 }
 
@@ -136,9 +148,9 @@ fun PointTarget.after(block: CodeScope.() -> Unit) {
         "$label: nothing runs after the $opcode at ${point.method.descriptor}[${point.index}]; use before"
     }
     point.method.insertCode(
-        minOf(point.anchor.tail, point.method.instructionCount),
-        point.captures,
+        CodePlacement.Before(minOf(point.anchor.tail, point.method.instructionCount).toUInt()),
         block,
+        point.captures,
     )
 }
 
@@ -161,7 +173,6 @@ fun PointTarget.skipWhen(condition: CodeScope.() -> ValueRef) {
     require(method.instructions.getOrNull(point.index + 1)?.opcode?.isMoveResult != true) {
         "$label: the result of ${ref.descriptor} is used; skipWhen needs a call whose result is unused"
     }
-    val opcode = Opcode.entries.firstOrNull { it.rangeVariant == callOpcode } ?: callOpcode
     val origins = ArgumentOrigins(method)
     val arguments =
         call.arguments("$label: ${method.descriptor}[${point.index}]").mapIndexed { i, arg ->
@@ -170,53 +181,18 @@ fun PointTarget.skipWhen(condition: CodeScope.() -> ValueRef) {
             Capture("skipWhen$i", arg.type, original.register)
         }
     method.insertCode(
-        point.anchor.head,
-        point.captures + arguments,
+        CodePlacement.OnEveryPath(point.anchor.head.toUInt()),
         {
             whenFalse(condition()) {
-                with(this as CodeEmitter) {
-                    emitInvoke(opcode, ref, arguments.map { capture(it.name).impl() })
-                }
+                val emitter = (this as EmittedCode).emitter
+                emitter.emitInvoke(
+                    callOpcode,
+                    ref,
+                    arguments.map { capture(it.name).builtBy(emitter) },
+                )
             }
         },
-        branches = InsertionBranches.RUN_INSERTION,
+        point.captures + arguments,
     )
     method.removeInstructions(point.anchor.head, point.anchor.tail - point.anchor.head)
-}
-
-internal enum class InsertionBranches {
-    KEEP_ORIGINAL_TARGET,
-    RUN_INSERTION,
-}
-
-internal fun Method.insertCode(
-    index: Int,
-    captures: List<Capture>,
-    block: CodeScope.() -> Unit,
-    entrySnapshots: MutableMap<Int, EntrySnapshot>? = null,
-    returned: Capture? = null,
-    branches: InsertionBranches =
-        if (entrySnapshots != null) InsertionBranches.RUN_INSERTION
-        else InsertionBranches.KEEP_ORIGINAL_TARGET,
-) {
-    val emitter = CodeEmitter.forInsertion(this, index, captures, returned, entrySnapshots)
-    emitter.block()
-    val instructions = emitter.build()
-    val localGrowth = emitter.plannedLocalGrowth
-    val insertionIndex =
-        if (localGrowth > 0) {
-            val indices = growLocals(localGrowth)
-            indices[index]
-        } else index
-    when (branches) {
-        InsertionBranches.RUN_INSERTION -> insertOnEveryPath(insertionIndex, instructions)
-        InsertionBranches.KEEP_ORIGINAL_TARGET -> insertInstructions(insertionIndex, instructions)
-    }
-}
-
-internal fun Method.replaceCode(block: CodeScope.() -> Unit) {
-    val emitter = CodeEmitter.forReplacement(this)
-    emitter.block()
-    val plan = emitter.buildReplacement()
-    replaceBody(plan.registersSize, plan.outsSize, plan.instructions)
 }

@@ -4,13 +4,11 @@ export GRADLE_OPTS := "-Xmx1g"
 gradle := "./gradlew --no-daemon -Dorg.gradle.jvmargs=-Xmx1536m"
 
 check:
-    test "$(boltffi --version)" = "boltffi $(cat .boltffi-version)"
-    cargo xtask regen patch-api
-    cargo xtask regen sdk
+    cargo xtask regen all
     cargo xtask runtime
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
-    {{ gradle }} spotlessCheck :reseam-sdk:compileKotlinJvm :reseam-patch-sdk:checkKotlinAbi
+    {{ gradle }} spotlessCheck :reseam-sdk:compileKotlinJvm :reseam-patch-sdk:checkKotlinAbi :reseam-gradle-plugin:test
     cargo test --workspace --no-fail-fast
     bun install --cwd browser --frozen-lockfile
     bun run --cwd browser engine

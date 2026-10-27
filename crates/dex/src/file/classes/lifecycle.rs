@@ -3,12 +3,12 @@
 
 use rayon::prelude::*;
 
-use super::records::RECORD_SIZE;
-use super::{ClassKey, ClassSlot, ClassTable, ClassUndo, Prior, RawClassDef};
+use super::{ClassKey, ClassSlot, ClassTable, ClassUndo, Prior};
 use crate::error::{Result, index_out_of_bounds};
+use crate::model::class::ClassDef;
+use crate::options::ParseOptions;
 use crate::read::class::read_class_def;
-use crate::types::class::ClassDef;
-use crate::types::header::ParseOptions;
+use crate::read::class::{RECORD_SIZE, RawClassDef};
 
 impl ClassTable {
     /// Decodes the class from the file if needed and returns it mutably.
@@ -92,19 +92,5 @@ impl ClassTable {
         self.journal
             .barrier(|| ClassUndo::Insert(i as u32, Box::new(def.clone())));
         Ok(def)
-    }
-
-    pub fn into_defs(mut self, opts: ParseOptions) -> Result<Vec<ClassDef>> {
-        self.materialize_all(opts)?;
-        Ok(self
-            .slots
-            .into_iter()
-            .map(|slot| match slot {
-                ClassSlot::Resident(c) => c.def,
-                ClassSlot::Raw(_) => {
-                    unreachable!("materialization has replaced the raw slot with a resident class")
-                }
-            })
-            .collect())
     }
 }

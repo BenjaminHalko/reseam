@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::error::{
-    Result, checksum_mismatch, invalid, invalid_magic, require_len, signature_mismatch, slice,
-    truncated, unsupported,
+    Result, checksum_mismatch, invalid, invalid_magic, signature_mismatch, unsupported,
 };
-use crate::read::u32_at;
-use crate::types::header::{DexHeader, DexVersion, ParseOptions};
+use crate::model::header::{DexHeader, DexVersion};
+use crate::options::ParseOptions;
+use reseam_bytes::{require_len, slice, u32_at};
 
 pub fn read_header_at(buf: &[u8], header_off: usize, opts: ParseOptions) -> Result<DexHeader> {
     require_len(buf, header_off, 112, "dex header")?;
@@ -72,13 +72,11 @@ pub fn read_header_at(buf: &[u8], header_off: usize, opts: ParseOptions) -> Resu
     let logical_end = header_off
         .checked_add(file_size as usize)
         .filter(|&end| end <= buf.len())
-        .ok_or_else(|| {
-            truncated(
-                "dex file",
-                header_off,
-                file_size as usize,
-                buf.len() - header_off,
-            )
+        .ok_or(reseam_bytes::Truncated {
+            section: "dex file",
+            offset: header_off,
+            needed: file_size as usize,
+            available: buf.len() - header_off,
         })?;
 
     if version.is_container_format()
@@ -156,14 +154,14 @@ fn verify_integrity(
     signature: &[u8; 20],
     opts: ParseOptions,
 ) -> Result<()> {
-    if !(opts.checksum == crate::types::header::Verification::Skip) {
+    if !(opts.checksum == crate::options::Verification::Skip) {
         let computed = zlib_rs::adler32::adler32(1, &buf[header_off + 12..logical_end]);
         if computed != checksum {
             return Err(checksum_mismatch(checksum, computed));
         }
     }
 
-    if !(opts.signature == crate::types::header::Verification::Skip) {
+    if !(opts.signature == crate::options::Verification::Skip) {
         let computed = <sha1::Sha1 as sha1::Digest>::digest(&buf[header_off + 32..logical_end]);
         if computed.as_slice() != signature.as_slice() {
             return Err(signature_mismatch());

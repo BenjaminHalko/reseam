@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use super::super::plan::CHANGES_MANIFEST;
-use super::super::{PatchResult, PatchStatus, ProgressEvent, ResolvedPlan};
+use super::super::{PatchResult, PatchStatus, ResolvedPlan, RunEvent};
 use crate::log::LogEntry;
-use crate::patch::{Patch, PatchSpec};
+use crate::patch::{Patch, PatchRef, PatchSpec};
 
 pub(super) struct Run<'a> {
     specs: &'a [&'a PatchSpec],
@@ -44,7 +44,7 @@ impl<'a> Run<'a> {
         }
         let skipped = |reason: String| Some(PatchStatus::Skipped { reason });
         for &dependency in plan.dependencies(idx) {
-            let name = self.specs[dependency].reference();
+            let name = &self.specs[dependency].reference;
             match self.results[dependency]
                 .as_ref()
                 .map(|result| &result.status)
@@ -86,7 +86,7 @@ impl<'a> Run<'a> {
         idx: usize,
         status: PatchStatus,
         logs: Vec<LogEntry>,
-        observer: &mut impl FnMut(ProgressEvent),
+        observer: &mut impl FnMut(RunEvent),
     ) {
         self.settled.push(idx);
         self.execution_logs[idx] = logs.len();
@@ -103,7 +103,7 @@ impl<'a> Run<'a> {
         idx: usize,
         status: PatchStatus,
         logs: Vec<LogEntry>,
-        observer: &mut impl FnMut(ProgressEvent),
+        observer: &mut impl FnMut(RunEvent),
     ) {
         self.set_result(plan, idx, status, logs);
         self.report(idx, observer);
@@ -118,11 +118,11 @@ impl<'a> Run<'a> {
     ) {
         let spec = self.specs[idx];
         self.results[idx] = Some(PatchResult {
-            patch: spec.reference(),
+            patch: spec.reference.clone(),
             hidden: spec.hidden,
             required_by: plan
                 .required_by(idx)
-                .map(|dependent| self.specs[dependent].reference())
+                .map(|dependent| self.specs[dependent].reference.clone())
                 .collect(),
             status,
             logs,
@@ -133,7 +133,7 @@ impl<'a> Run<'a> {
         &mut self,
         idx: usize,
         logs: Vec<LogEntry>,
-        observer: &mut impl FnMut(ProgressEvent),
+        observer: &mut impl FnMut(RunEvent),
     ) {
         self.result_mut(idx).logs.extend(logs);
         self.finalized[idx] = true;
@@ -147,7 +147,7 @@ impl<'a> Run<'a> {
     /// Takes back the results of `first` and every patch settled after it, and
     /// every finalization, which all came after it. Returns the patches that
     /// had been reported finished.
-    pub(super) fn revert_from(&mut self, plan: &ResolvedPlan, first: usize) -> Vec<String> {
+    pub(super) fn revert_from(&mut self, plan: &ResolvedPlan, first: usize) -> Vec<PatchRef> {
         let start = self
             .settled
             .iter()
@@ -159,7 +159,7 @@ impl<'a> Run<'a> {
                 continue;
             }
             if self.reported[idx].take().is_some() {
-                reverted.push(self.specs[idx].reference());
+                reverted.push(self.specs[idx].reference.clone());
             }
             self.results[idx] = None;
             self.finalized[idx] = false;
@@ -183,7 +183,7 @@ impl<'a> Run<'a> {
     }
 
     /// Reports the patch finished unless it already was with this status.
-    fn report(&mut self, idx: usize, observer: &mut impl FnMut(ProgressEvent)) {
+    fn report(&mut self, idx: usize, observer: &mut impl FnMut(RunEvent)) {
         let result = self.results[idx]
             .as_ref()
             .expect("a reported patch has a result");
@@ -191,7 +191,7 @@ impl<'a> Run<'a> {
             return;
         }
         self.reported[idx] = Some(result.status.clone());
-        observer(ProgressEvent::Finished {
+        observer(RunEvent::PatchFinished {
             patch: result.patch.clone(),
             status: result.status.clone(),
         });

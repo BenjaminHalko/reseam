@@ -13,7 +13,7 @@ enum Failure {
 }
 
 fn hooked(declaration: PatchSpec, failure: Failure, events: Arc<Mutex<Vec<String>>>) -> Patch {
-    let id = declaration.id.clone();
+    let id = declaration.reference.id.clone();
     Patch::new(declaration, true, move |phase| {
         let (name, fails) = match phase {
             PatchPhase::Execute(_) => ("execute", matches!(failure, Failure::Execute)),
@@ -67,16 +67,16 @@ fn finalization_orders_hooks_and_emits_one_terminal_result() {
         )
         .unwrap();
         let results = apply_patches(
-            &mut PatchContext::new(&mut apk),
+            &mut PatchContext::new(&mut apk, ExtensionSet::app_runtime()),
             &specs,
             plan,
             &patches,
             |event| match event {
-                ProgressEvent::Finished { patch, status } => {
+                RunEvent::PatchFinished { patch, status } => {
                     events.lock().unwrap().push(format!("finished:{patch}"));
                     finished.push((patch, Status::from(&status)));
                 }
-                ProgressEvent::Reverted { patches } => {
+                RunEvent::PatchesReverted { patches } => {
                     finished.retain(|(patch, _)| !patches.contains(patch));
                 }
                 _ => {}

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-pub use reseam_model::{Problem, SdkError};
+use reseam_model::{Problem, SdkError};
 use reseam_patcher::error::PatcherError;
 use thiserror::Error;
 
@@ -35,8 +35,6 @@ pub enum HostError {
     },
     #[error("{0}")]
     InvalidRequest(&'static str),
-    #[error("failed to resolve patch selection: {0}")]
-    Selection(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{operation} {}: {source}", path.display())]
     File {
         operation: &'static str,
@@ -71,8 +69,8 @@ pub(crate) fn file_error(
     }
 }
 
-/// Converts a source chain to the stable problem and diagnostic text used by Kotlin.
-pub fn sdk_error(error: &(dyn std::error::Error + 'static)) -> SdkError {
+/// Converts a source chain to the stable problem and diagnostic text hosts receive.
+fn sdk_error(error: &(dyn std::error::Error + 'static)) -> SdkError {
     let chain: Vec<_> = std::iter::successors(Some(error), |cause| cause.source()).collect();
     SdkError {
         problem: classify(error),
@@ -103,24 +101,7 @@ pub(crate) fn classify(error: &(dyn std::error::Error + 'static)) -> Problem {
                 _ => {}
             }
             match cause.downcast_ref::<PatcherError>() {
-                Some(PatcherError::BundleTooOld {
-                    bundle,
-                    built,
-                    running,
-                }) => Some(Problem::BundleTooOld {
-                    bundle: bundle.clone(),
-                    built: built.clone(),
-                    running: running.clone(),
-                }),
-                Some(PatcherError::EngineTooOld {
-                    bundle,
-                    built,
-                    running,
-                }) => Some(Problem::EngineTooOld {
-                    bundle: bundle.clone(),
-                    built: built.clone(),
-                    running: running.clone(),
-                }),
+                Some(PatcherError::Problem(problem)) => Some(problem.clone()),
                 Some(PatcherError::RewriteOutput { patch, .. }) => Some(Problem::PatchesFailed {
                     patches: vec![patch.clone()],
                 }),

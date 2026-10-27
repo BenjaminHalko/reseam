@@ -3,20 +3,18 @@
 
 mod by_type;
 mod lifecycle;
-mod records;
 mod undo;
 
 use std::sync::OnceLock;
 
-use super::DexBytes;
-use super::ids::{read_type_list, validate_type_list};
-use super::ref_index::ClassRefs;
+use crate::DexBytes;
 use crate::error::Result;
-use crate::types::class::ClassDef;
-use crate::types::{TypeIdx, TypeList};
+use crate::model::class::{ClassDef, ClassHeader};
+use crate::model::{TypeIdx, TypeList};
+use crate::read::class::{RECORD_SIZE, RawClassDef};
+use crate::read::type_list::{read_type_list, validate_type_list};
+use crate::search::index::ClassRefs;
 use by_type::TypeIndex;
-use records::RECORD_SIZE;
-pub use records::{ClassHeader, RawClassDef};
 pub(crate) use undo::Undone;
 use undo::{ClassKey, ClassUndo, Prior};
 
@@ -86,14 +84,6 @@ impl ClassTable {
         })
     }
 
-    pub fn from_defs(defs: Vec<ClassDef>) -> Self {
-        Self {
-            resident: (0..defs.len() as u32).collect(),
-            slots: defs.into_iter().map(ClassSlot::resident).collect(),
-            ..Self::default()
-        }
-    }
-
     pub fn len(&self) -> usize {
         self.slots.len()
     }
@@ -133,6 +123,14 @@ impl ClassTable {
             ClassSlot::Raw(r) => Some(self.record(*r)),
             ClassSlot::Resident(_) => None,
         }
+    }
+
+    /// Where a file class's `class_data_item` starts; `None` for resident
+    /// classes and classes without class data.
+    pub(crate) fn class_data_offset(&self, i: usize) -> Option<u32> {
+        self.raw_def(i)
+            .map(|def| def.class_data_off)
+            .filter(|&off| off != 0)
     }
 
     pub fn resident(&self, i: usize) -> Option<&ClassDef> {
@@ -189,43 +187,12 @@ impl ClassTable {
         })
     }
 
-    pub fn iter_resident_mut(&mut self) -> impl Iterator<Item = &mut ClassDef> {
-        if let Some(index) = self.by_type.get_mut() {
-            index
-                .changed
-                .extend(self.slots.iter().enumerate().filter_map(|(i, slot)| {
-                    matches!(slot, ClassSlot::Resident(_)).then_some(i as u32)
-                }));
-        }
-        let journal = &mut self.journal;
-        self.slots
-            .iter_mut()
-            .enumerate()
-            .filter_map(move |(i, s)| match s {
-                ClassSlot::Resident(c) => {
-                    journal.record(ClassKey::Slot(i as u32), || {
-                        ClassUndo::Restore(i as u32, Prior::Resident(Box::new(c.def.clone())))
-                    });
-                    Some(c.grant())
-                }
-                ClassSlot::Raw(_) => None,
-            })
-    }
-
     pub(crate) fn resident_indices(&self) -> &[u32] {
         &self.resident
     }
 
     pub fn is_resident(&self, i: usize) -> bool {
         matches!(self.slots.get(i), Some(ClassSlot::Resident(_)))
-    }
-
-    pub fn all_resident(&self) -> bool {
-        self.resident.len() == self.slots.len()
-    }
-
-    pub fn resident_count(&self) -> usize {
-        self.resident.len()
     }
 
     pub fn heap_bytes(&self) -> u64 {
@@ -249,7 +216,7 @@ impl ClassTable {
         RawClassDef::read(self.raw_bytes(), self.off + r as usize * RECORD_SIZE)
     }
 
-    fn raw_bytes(&self) -> &[u8] {
+    pub(crate) fn raw_bytes(&self) -> &[u8] {
         self.raw
             .as_ref()
             .expect("raw entries exist only while the buffer is retained")

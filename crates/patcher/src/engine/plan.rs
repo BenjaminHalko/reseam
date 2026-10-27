@@ -3,7 +3,8 @@
 
 use std::collections::HashSet;
 
-use super::{PatchIndex, PatchStatus};
+use super::PatchStatus;
+use crate::catalog::PatchCatalog;
 
 use crate::context::PatchContext;
 use crate::error::{PatcherError, Result};
@@ -79,7 +80,7 @@ impl ResolvedPlan {
         package: Option<&str>,
         version: ApkVersion<'_>,
     ) -> Result<Self> {
-        let index = PatchIndex::new(specs)?;
+        let index = PatchCatalog::new(specs)?;
         let DependencyGraph {
             dependencies,
             dependents,
@@ -92,7 +93,7 @@ impl ResolvedPlan {
         let enabled: HashSet<usize> = selection.enable.iter().map(lookup).collect::<Result<_>>()?;
         for &idx in &enabled {
             if let Some(missing) = &missing[idx] {
-                return Err(missing.error(specs[idx].reference()));
+                return Err(missing.error(&specs[idx].reference));
             }
         }
         let unavailable: Vec<Option<String>> = missing
@@ -127,9 +128,13 @@ impl ResolvedPlan {
                 } else if let Some(reason) = &unavailable[idx] {
                     Some(reason.clone())
                 } else if selection.ignore_versions {
-                    spec.package_incompatibility(package)
+                    spec.compatibility
+                        .package_incompatibility(package)
+                        .map(|reason| reason.to_string())
                 } else {
-                    spec.incompatibility(package, version)
+                    spec.compatibility
+                        .incompatibility(package, version)
+                        .map(|reason| reason.to_string())
                 };
                 match reason {
                     Some(reason) => Some(PatchStatus::Skipped { reason }),

@@ -86,6 +86,7 @@ Generators, async functions, class constructors, `new.target`, direct `eval` and
 | `klass(debugName) { ClassQuery }` | The unique matching class, or the best candidate with `first()`. |
 | `ClassTarget.method(name, inherited = false) { MethodQuery }` | A method of the class by name, narrowed by the optional block. |
 | `ClassTarget.methods(debugName = null, inherited = false) { }` | Matching methods of the class. |
+| `ClassTarget.addMethod(name, proto, accessFlags) { CodeScope }` | Gives the class the method with that body, adding it unless the class already declares it. Flags default to public final, public on an interface. `MethodTarget`. |
 | `ClassTarget.field(name)` | A field by name. `FieldTarget`. |
 | `ClassTarget.enumConstant(name)` | The field holding the enum constant whose `name()` is `name`, even when obfuscation renamed it. `FieldTarget`. |
 | `ClassTarget.fieldOfType(type)` | The one instance field of that type. |
@@ -136,12 +137,11 @@ Generators, async functions, class constructors, `new.target`, direct `eval` and
 | `appEntry { AppEntryScope }` | Emit into code that runs once at process start, first in `onCreate()` of the `Application` the final manifest names. `AppEntryScope` is a `CodeScope` whose `application` is the `Application`; it has no `thisObject`. Fails when the manifest names no `Application`. |
 | `PointTarget.before { }`, `.after { }` | Emit around the instruction. `before` code runs on every path into the instruction, branches to it included; `after` code runs only when the instruction falls through. Repeated emissions at one point stack in emission order. `after` fails on a return, `throw` or `goto`, since nothing after it runs. |
 | `MethodTarget.reserveLocal(name, type)` | A `MethodLocal`, zeroed at entry and read in blocks of the same method as `local(slot)`. Reserves both words for a wide type; body replacement invalidates it. |
-| `MethodTarget.alwaysReturn()`, `(Boolean)`, `(Int)`, `(Long)`, `(String)`, `alwaysReturnNull()` | Replace the body with a constant return. |
-| `MethodTarget.replaceAllStrings(old, new)`, `replaceAllLiterals(old, new)` | Rewrite constants; returns the count. |
+| `MethodTarget.alwaysReturn()`, `(Boolean)`, `(Int)`, `(Long)`, `(String)`, `alwaysReturnNull()` | Replace the body with a constant return, as `replace { }` would. The value must suit the return type. |
 
 `CodeScope`: `thisObject`, `param(i)`, `paramOfType(type)`, `lastParam`, `result` (in a method's `after`), `capture(name)` (a `captureAs` value), `local(slot)`, `int`, `long`, `bool`, `string`, `nullObject`, `enumValue(type, name)` (a constant by its field name; see `ClassTarget.enumConstant` for obfuscated enums), `staticField(FieldTarget | FieldRef)`, `setStatic(FieldTarget | FieldRef, value)`, `newInstance(type, ctorProto = "()V", vararg args)`, `call(ExtMethod | MethodTarget, args)` (fails when the extension method does not exist or the argument count does not match), `ExtMethod(args)` (the same as `call` for a static extension method), `callStatic(owner, name, proto, args)`, `whenTrue`, `whenFalse`, `whenNull`, `whenNotNull`, `whenEqual`, `whenNotEqual`, `whenInstanceOf(value, type)` (each returns `Otherwise` with `otherwise { }`), `returnVoid`, `returnValue`, `returnTrue`, `returnFalse`, `returnNull`.
 
-`ValueRef`: `type`, `cast(type)`, `field(FieldTarget | FieldRef)`, `fieldOfType(type)`, `set(field, value)`, `assign(value)` (fails on a value read from a field), `call(ExtMethod | MethodTarget, args)`, `callVirtual(owner, name, proto, args)`, `callInterface(...)`, `size()`, `get(index)`, `plus`, `minus`.
+`ValueRef`: `type`, `cast(type)`, `field(FieldTarget | FieldRef)`, `fieldOfType(type)`, `set(field, value)`, `assign(value)` (fails on a value read from a field), `call(ExtMethod | MethodTarget, args)`, `callVirtual(owner, name, proto, args)`, `callInterface(...)`, `callSuper(...)`, `size()`, `get(index)`, `plus`, `minus`.
 
 | Symbol | Description |
 |---|---|
@@ -190,11 +190,11 @@ Resource file and value helpers:
 | `bind(label) { BindingQuery }` | A `BindingTarget`. |
 | `BindingTarget` | `sourceType`, `sourceField`, `of(value)`, `member(name, value)`. |
 
-`BindingQuery`: `sourceType`, `fromField(label) { FieldLocator }`, `fromMethod(target)`, `fromClass(target)`, `raw { PathQuery }`, `objectValue(name) { }`, `string(name) { }`, `context(name) { }`, `intValue(name) { }`, `bind(name, target) { }`.
+`BindingQuery`: `sourceType`, `fromField(label) { FieldLocator }`, `fromMethod(target)`, `fromClass(target)`, `raw { PathQuery }`, `member(name) { PathQuery }`, `bind(name, target) { }`.
 
 `FieldLocator`: `owner`, `firstObjectRead`, `firstObjectReadAnyOwner`, `nearestObjectReadBeforeString`, `rankBy(label) { RankScope }`, `requireScoreAtLeast`.
 
-`PathQuery`: `self`, `member(name)`, `param(i)`, `field(type)`, `field(name) { FieldLocator }`, `field(target)`, `instanceField(type)`, `instanceField(types)`, `objectSlots().firstInstanceOf(type)`, `firstFieldRead`, `nextFieldRead(owner?)`, `nextInterfaceCall(returning?, returningObject)`, `callVirtual`, `callInterface`, `listGetter(name) { rankBy }`, `first`, `last`, `cast`.
+`PathQuery`: `self`, `member(name)`, `param(i)`, `field(type)`, `field(name) { FieldLocator }`, `field(target)`, `instanceField(types)` (the first type the owner has a field of), `objectSlots().firstInstanceOf(type)`, `firstFieldRead`, `nextFieldRead(owner?)`, `nextInterfaceCall(returning?, returningObject)` (`returning` is the call's return type), `callVirtual`, `callInterface`, `listGetter(name) { rankBy }`, `first`, `last`, `cast`.
 
 ### Types
 
@@ -246,16 +246,15 @@ Resource file and value helpers:
 
 | Symbol | Description |
 |---|---|
-| `Method` | Handle to a method. Reads: `info`, `classDef`, `descriptor`, `name`, `owner`, `proto`, `returnType`, `parameterTypes`, `isStatic`, `instructions`, `instructionCount`, `registersSize`, `insSize`, `outsSize`, `dexIndex`, `registerA..D(index)`, `wideLiteral`, `stringRef`, `methodRef`, `fieldRef`, `typeRef`. Searches: `indexOfFirst`, `indexOfFirstReversed`, `indexOfFirstLiteral`, `indexOfFirstLiteralReversed`, `containsLiteral`, `indexOfFirstString`, `findAllIndices`, `indexOfFirstMethodCall`, `indexOfFirstFieldAccess`, `indexOfOpcodeSequence` (`null` matches any one instruction), `indexOfFirstInstruction { }`, `indexOfFirstInstructionReversed { }`. Mutation: `alwaysReturn*`, `setInstructions`, `replaceBody`, `insertInstruction(s)`, `addInstructions(index) { }`, `replaceInstruction`, `removeInstruction(s)`, `replaceString`, `replaceAllStrings`, `replaceLiteral`, `replaceAllLiterals`, `replaceMethodCall`, `ensureOutsSize`, `growLocalRegisters`, `findFreeRegister(s)`, `findContiguousFreeRegisters`, `setAccessFlags`, `clone`, `remove`, `addAnnotation`. |
+| `Method` | Handle to a method. Reads: `info`, `classDef`, `descriptor`, `name`, `owner`, `proto`, `returnType`, `parameterTypes`, `isStatic`, `instructions`, `instructionCount`, `registersSize`, `insSize`, `outsSize`, `dexIndex`. Searches: `indexOfFirst`, `indexOfFirstReversed`, `indexOfFirstLiteral`, `indexOfFirstLiteralReversed`, `containsLiteral`, `indexOfFirstString`, `findAllIndices`, `indexOfFirstMethodCall`, `indexOfFirstFieldAccess`, `indexOfOpcodeSequence` (`null` matches any one instruction), `indexOfFirstInstruction { }`, `indexOfFirstInstructionReversed { }`, `findFreeRegister(index, exclude)`. Mutation: `replaceBody(registersSize, outsSize, insns)`, `insertInstructions(index, insns)`, `replaceInstruction(index, insn)`, `removeInstructions(index, count)`, `replaceAllStrings`, `replaceAllLiterals` (both return the count), `replaceMethodCall`, `ensureOutsSize`, `setAccessFlags`, `clone`, `remove`, `addAnnotation`. Read an instruction's operands from `instructions[index]`. |
 | `DexClass` | Handle to a class: `info`, `descriptor`, `superclass`, `interfaces`, `sourceFile`, `isInterface`, `methods`, `directMethods`, `virtualMethods`, `fields`, `staticFields`, `instanceFields`, `superclassChain` (nearest first, across every DEX of the app, ending where the platform starts), `method(name, proto?)`, `field(name)`, `setAccessFlags`, `setSuperclass`, `addInterface`, `definal`, `remove`, `addMethod`, `addField`, `removeField`, `setFieldAccessFlags`, `setStaticFieldValue`, `addAnnotation`, `addFieldAnnotation`. |
 | `FieldInfo.ref` | The `FieldRef` of a field. |
-| `Instruction.*` | `opcodeValue`, `opcode`, `regA`, `regB`, `regC`, `invokeRegisters`, `methodRef`, `fieldRef`, `stringValue`, `typeRef`, `literal`, `referencedRegisters`, `invokeArgumentTypes` (what an invoke passes, receiver first), `codeUnitSize`. |
+| `Instruction.*` | `opcode`, `regA`, `regB`, `regC`, `invokeRegisters`, `methodRef`, `fieldRef`, `stringValue`, `typeRef`, `literal`, `referencedRegisters`, `invokeArgumentTypes` (what an invoke passes, receiver first). |
 | `MethodRef.*`, `MethodInfo.*` | `returnType`, `parameterTypes`, `descriptor`; `MethodInfo.isStatic`. |
 | `parseParameterTypes(proto)`, `registerWordCount(type)`, `isReferenceType(type)` | Descriptor helpers. |
-| `Opcode` | Enum of Dalvik opcodes: `value`, `isInvoke`, `isReturn`, `isMoveResult`, `rangeVariant`, `Opcode.of(value)`. |
+| `Opcode` | Enum of Dalvik opcodes: `value`, `isInvoke`, `isReturn`, `isMoveResult`, `Opcode.of(value)`. |
 | `AccessFlags` | Flag constants; `Int.isSet(flags)` for any bit of the mask, `Int.allSet(flags)` for every bit. |
 | `InstructionBuilder`, `buildInstructions { }` | See [Raw bytecode](12_bytecode.md). |
-| `lowerInvokes(insns, scratch)` | Rewrites invokes the 35c format cannot encode into range form. |
 
 ## `app.reseam.patch.types`
 

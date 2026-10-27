@@ -4,7 +4,10 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::PatchRef;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "UPPERCASE")]
 #[boltffi::data]
 pub enum LogLevel {
@@ -14,10 +17,11 @@ pub enum LogLevel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[boltffi::data]
 pub struct LogEntry {
     pub level: LogLevel,
-    pub patch: String,
+    pub patch: PatchRef,
     pub message: String,
 }
 

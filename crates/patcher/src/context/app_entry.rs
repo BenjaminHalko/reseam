@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use reseam_apk::reseam_dex::{AccessFlags, CodeItem, DexFile, EncodedMethod, Instruction, RegList};
+use reseam_dex::{AccessFlags, CodeItem, DexFile, EncodedMethod, Instruction, RegList};
 
 use super::{ClassLocation, MethodLocation, PatchContext};
-use reseam_apk::reseam_dex::MethodKind;
+use reseam_dex::MethodKind;
 
 use crate::error::{PatcherError, Result};
 
@@ -45,7 +45,7 @@ impl PatchContext<'_> {
         )?;
         let method = dex.intern_method(HOOK_CLASS, HOOK_NAME, HOOK_PROTO)?;
         let class = dex.class_mut(class_idx)?;
-        class.add_direct_method(EncodedMethod {
+        class.add_method(EncodedMethod {
             method,
             access_flags: AccessFlags::PUBLIC | AccessFlags::STATIC,
             code: Some(Arc::new(CodeItem::new(
@@ -119,20 +119,20 @@ impl PatchContext<'_> {
         let code = super::code_mut(dex, on_create)?
             .ok_or_else(|| app_entry_error("the Application's onCreate() has no code"))?;
         code.ensure_outs_size(1);
-        code.insert_instruction(
+        code.insert_instructions(
             0,
-            Instruction::InvokeStaticRange {
+            &[Instruction::InvokeStaticRange {
                 method: hook,
                 first_reg: code.registers_size() - code.ins_size(),
                 count: 1,
-            },
+            }],
         )?;
         Ok(())
     }
 
     fn add_on_create(&mut self, application: ClassLocation) -> Result<()> {
         let dex = self.class_dex(application)?;
-        let header = dex.class_header(application.class_idx);
+        let header = dex.classes().header(application.class_idx);
         let class = dex.type_descriptor(header.class_type).into_owned();
         let superclass = header.superclass.map_or_else(
             || APPLICATION.to_owned(),
@@ -142,7 +142,7 @@ impl PatchContext<'_> {
         let inherited = dex.intern_method(&superclass, "onCreate", "()V")?;
         let method = dex.intern_method(&class, "onCreate", "()V")?;
         dex.class_mut(application.class_idx)?
-            .add_virtual_method(EncodedMethod {
+            .add_method(EncodedMethod {
                 method,
                 access_flags: AccessFlags::PUBLIC,
                 code: Some(Arc::new(CodeItem::new(
@@ -207,21 +207,10 @@ fn declared_method(
     name: &str,
     proto: &str,
 ) -> Option<(usize, MethodKind)> {
-    let data = dex.resident_class(class_idx)?.class_data.as_ref()?;
-    let matches = |method: &EncodedMethod| {
-        let id = dex.method_id(method.method);
-        dex.string(id.name) == name && dex.proto_descriptor(&dex.proto(id.proto)) == proto
-    };
-    data.direct_methods
-        .iter()
-        .position(matches)
-        .map(|idx| (idx, MethodKind::Direct))
-        .or_else(|| {
-            data.virtual_methods
-                .iter()
-                .position(matches)
-                .map(|idx| (idx, MethodKind::Virtual))
-        })
+    let class = dex.classes().resident(class_idx)?;
+    let method = dex.find_method(class.class_type, name, proto)?;
+    let (kind, position) = class.class_data.as_ref()?.find_method(method)?;
+    Some((position, kind))
 }
 
 fn app_entry_error(message: impl Into<String>) -> PatcherError {

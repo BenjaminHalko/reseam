@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::encoding::leb128::read_uleb128_with_opts;
-use crate::error::{Result, invalid_encoded_value_type, malformed, slice};
-use crate::read::read_u8;
-use crate::types::encoded_value::{
+use crate::encoding::leb128::read_uleb128;
+use crate::error::{Result, invalid_encoded_value_type, malformed};
+use crate::model::MethodHandleIdx;
+use crate::model::encoded_value::{
     EncodedAnnotation, EncodedAnnotationElement, EncodedValue, ValueKind,
 };
-use crate::types::header::ParseOptions;
-use crate::types::method_handle::MethodHandleIdx;
-use crate::types::{FieldIdx, MethodIdx, ProtoIdx, StringIdx, TypeIdx};
+use crate::model::{FieldIdx, MethodIdx, ProtoIdx, StringIdx, TypeIdx};
+use crate::options::ParseOptions;
+use reseam_bytes::{read_u8, slice};
 
 pub fn read_encoded_value_with_opts(
     buf: &[u8],
@@ -74,7 +74,7 @@ pub fn read_encoded_array_with_opts(
     pos: usize,
     opts: ParseOptions,
 ) -> Result<(Vec<EncodedValue>, usize)> {
-    let (size, mut consumed) = read_uleb128_with_opts(buf, pos, opts)?;
+    let (size, mut consumed) = read_uleb128(buf, pos, opts)?;
     let mut values =
         Vec::with_capacity((size as usize).min(buf.len().saturating_sub(pos + consumed)));
     for _ in 0..size {
@@ -90,14 +90,14 @@ pub fn read_encoded_annotation_with_opts(
     pos: usize,
     opts: ParseOptions,
 ) -> Result<(EncodedAnnotation, usize)> {
-    let (type_idx, mut consumed) = read_uleb128_with_opts(buf, pos, opts)?;
-    let (size, n) = read_uleb128_with_opts(buf, pos + consumed, opts)?;
+    let (type_idx, mut consumed) = read_uleb128(buf, pos, opts)?;
+    let (size, n) = read_uleb128(buf, pos + consumed, opts)?;
     consumed += n;
 
     let mut elements =
         Vec::with_capacity((size as usize).min(buf.len().saturating_sub(pos + consumed) / 2));
     for _ in 0..size {
-        let (name_idx, n) = read_uleb128_with_opts(buf, pos + consumed, opts)?;
+        let (name_idx, n) = read_uleb128(buf, pos + consumed, opts)?;
         consumed += n;
         let (value, n) = read_encoded_value_with_opts(buf, pos + consumed, opts)?;
         consumed += n;

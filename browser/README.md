@@ -19,7 +19,7 @@ WASI_SDK_PATH=/path/to/wasi-sdk-33.0-x86_64-linux bun run --cwd browser engine
 bun run --cwd browser types
 ```
 
-`engine` writes the WASM modules, Java host, Kotlin runtime and native-method manifest to `public/runtime/<hash>/` and their sizes and SHA-256 sums to `src/runtime.generated.ts`, which the loader checks. `types` writes declarations to `types/`. Release tags publish the package to `https://git.reseam.app/api/packages/reseam/npm/`.
+`engine` runs `cargo xtask pack-browser`, which writes the WASM modules, Java host, Kotlin runtime and native-method manifest to `public/runtime/<hash>/` and their sizes and SHA-256 sums to `src/runtime.generated.ts`, which the loader checks. `types` writes declarations to `types/`. Release tags publish the package to `https://git.reseam.app/api/packages/reseam/npm/`.
 
 ## Host requirements
 
@@ -41,14 +41,14 @@ import { BrowserSession, JavaRuntime } from '@reseam/browser';
 const java = new JavaRuntime({ runtimeBase });
 void java.warmup();
 const session = await BrowserSession.open(files, { javaRuntime: java, signal, onEvent });
-const inspection = await session.inspect({ apk_path, split_paths, bundle_paths });
+const inspection = await session.inspect({ apk_path, split_paths, bundle_paths, trust });
 await session.mount(signingFilesAndOptionFiles);
 const outcome = await session.patch(request);
 const artifacts = await session.artifacts();
 await session.dispose();
 ```
 
-Requests and results are the SDK models (`src/models.ts`). Failures are `EngineError`s carrying the SDK `Problem`.
+Requests and results are the SDK models in `src/models.ts`, generated from `crates/model` by `cargo xtask regen browser`. Failures are `EngineError`s carrying the SDK `Problem`.
 
 - A session runs one patch. Inspection keeps the opened APK and verified catalogs for it; trust and payload hashes are checked again before patch code loads.
 - `mount()` adds files after inspection but cannot replace inspected inputs.
@@ -65,7 +65,7 @@ Signing is the CLI's APK v2 signer: P-256, Android 7 and later, no v1. With empt
 `compare-cli.ts` patches real apps in Chromium and with the CLI using the same bundle, selection, key and certificate. It then checks that every byte outside the signing block and every ZIP entry match, and that `apksigner` verifies both.
 
 ```sh
-CARGO_BUILD_JOBS=4 cargo build --release -p reseam-cli
+cargo build --release -p reseam-cli
 bun run --cwd browser harness
 MATRIX_PATH=apps.json CHROMIUM_PATH=/path/to/chromium \
 APKSIGNER=/path/to/build-tools/36.0.0/apksigner bun browser/scripts/compare-cli.ts

@@ -24,7 +24,6 @@ type Callback = dyn Fn(PatchPhase<'_, '_>) -> Result<()> + Send + Sync;
 /// execution failure.
 pub struct Patch {
     spec: PatchSpec,
-    reference: String,
     finalizes: bool,
     callback: Box<Callback>,
 }
@@ -41,7 +40,6 @@ impl Patch {
         callback: impl Fn(PatchPhase<'_, '_>) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
         Self {
-            reference: spec.reference(),
             spec,
             finalizes,
             callback: Box::new(callback),
@@ -52,9 +50,8 @@ impl Patch {
         &self.spec
     }
 
-    /// `<bundle>/<id>`, shared by selections, dependencies and results.
-    pub fn reference(&self) -> &str {
-        &self.reference
+    pub fn reference(&self) -> &PatchRef {
+        &self.spec.reference
     }
 
     pub fn finalizes(&self) -> bool {
@@ -69,5 +66,5 @@ impl Patch {
 }
 
 pub use reseam_model::{
-    ApkVersion, Compatibility, CompatiblePackage, PatchPreset, PatchSpec, is_slug,
+    ApkVersion, Compatibility, CompatiblePackage, PatchPreset, PatchRef, PatchSpec,
 };

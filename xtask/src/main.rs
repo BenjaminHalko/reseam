@@ -6,13 +6,15 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 mod boltffi;
+mod browser;
+mod dex_codec;
 mod framework;
-mod opcodes;
+mod models;
 mod patch_api;
 mod paths;
-mod release;
 mod run;
 mod sdk;
+mod version;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Reseam build orchestration tasks")]
@@ -33,10 +35,15 @@ enum Cmd {
     Runtime,
     /// Packages SDK Android and desktop JNI libraries after building the runtime jar.
     PackSdk,
+    /// Builds the browser engine and runtime assets into `browser/public/runtime`. Needs `WASI_SDK_PATH`.
+    PackBrowser,
     /// Sets the workspace version, commits, and tags the release.
     Release { version: String },
     /// Fails unless the tag names the workspace version.
     CheckTag { tag: String },
+    /// Checks that decoding then encoding every method of each DEX, or of each
+    /// `classes*.dex` in an APK, reproduces its code units.
+    DexRoundTrip { paths: Vec<PathBuf> },
     /// Generates framework resource metadata from Android SDK platform 36, revision 2.
     FrameworkAttributes {
         #[arg(long)]
@@ -48,28 +55,44 @@ enum Cmd {
 enum RegenTarget {
     PatchApi,
     Sdk,
+    /// The browser package's TypeScript models.
+    Browser,
     All,
 }
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Regen { target } => {
-            boltffi::check_version()?;
+            if !matches!(target, RegenTarget::Browser) {
+                boltffi::check_version()?;
+            }
             if matches!(target, RegenTarget::PatchApi | RegenTarget::All) {
                 patch_api::regen()?;
             }
             if matches!(target, RegenTarget::Sdk | RegenTarget::All) {
                 sdk::regen()?;
             }
+            if matches!(target, RegenTarget::Browser | RegenTarget::All) {
+                models::regen()?;
+            }
         }
-        Cmd::Runtime => run::gradle(&[":reseam-sdk:patchRuntimeJar", ":app-runtime:stage"])?,
+        Cmd::Runtime => runtime()?,
         Cmd::PackSdk => {
             boltffi::check_version()?;
             sdk::pack()?;
         }
-        Cmd::Release { version } => release::release(&version)?,
-        Cmd::CheckTag { tag } => release::check_tag(&tag)?,
+        Cmd::PackBrowser => {
+            boltffi::check_version()?;
+            browser::pack()?;
+        }
+        Cmd::Release { version } => version::tag(&version)?,
+        Cmd::CheckTag { tag } => version::check_tag(&tag)?,
+        Cmd::DexRoundTrip { paths } => dex_codec::round_trip(&paths)?,
         Cmd::FrameworkAttributes { android_jar } => framework::generate(&android_jar)?,
     }
     Ok(())
+}
+
+fn runtime() -> Result<()> {
+    run::gradle(&[":reseam-sdk:patchRuntimeJar", ":app-runtime:stage"])
 }

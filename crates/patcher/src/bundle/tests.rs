@@ -9,13 +9,20 @@ use sha2::{Digest, Sha256};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use reseam_model::Problem;
+
+use super::manifest::BundleManifest;
 use super::*;
+use crate::error::PatcherError;
 
 fn load_all(archive: BundleArchive) -> crate::error::Result<PatchBundle> {
     let ids = archive
         .patches()
         .iter()
-        .map(|spec| spec.id.clone())
+        .map(|spec| spec.reference.id.clone())
         .collect();
     archive.load(&ids)
 }
@@ -36,13 +43,7 @@ fn signed_bundles_keep_their_resources_and_version() {
     let resource = vec![0x5a; 200_000];
     std::fs::write(stage.path().join("resources/drawable/icon.png"), &resource).unwrap();
     let out = stage.path().join("example.reseam");
-    pack(
-        stage.path(),
-        Some("1.2.0"),
-        &SigningKey::from_bytes(&[42; 32]),
-        &out,
-    )
-    .unwrap();
+    pack(stage.path(), Some("1.2.0"), &test_key(stage.path()), &out).unwrap();
     let archive = BundleArchive::open(&out).unwrap();
     assert_eq!(archive.info().version, "1.2.0");
     assert_eq!(
@@ -74,6 +75,13 @@ fn resource_archive(path: &Path, name: &str, declared: &[u8], actual: &[u8]) {
     signed_archive(path, &manifest, name, actual);
 }
 
+/// The key `signed_archive` signs with, as an author's key file.
+fn test_key(dir: &Path) -> BundleKey {
+    let path = dir.join("bundle-signing.key");
+    std::fs::write(&path, [42; 32]).unwrap();
+    BundleKey::read(&path).unwrap()
+}
+
 fn signed_archive(path: &Path, manifest: &str, name: &str, actual: &[u8]) {
     let key = SigningKey::from_bytes(&[42; 32]);
     let mut zip = ZipWriter::new(File::create(path).unwrap());
@@ -101,9 +109,9 @@ fn compatibility_errors_take_precedence_over_catalog_schema_errors() {
         let error = BundleArchive::open(&path).err().unwrap();
         assert!(
             if older {
-                matches!(error, PatcherError::BundleTooOld { .. })
+                matches!(error, PatcherError::Problem(Problem::BundleTooOld { .. }))
             } else {
-                matches!(error, PatcherError::EngineTooOld { .. })
+                matches!(error, PatcherError::Problem(Problem::EngineTooOld { .. }))
             },
             "{error}"
         );
@@ -260,7 +268,7 @@ public final class Declarations {
             )
             .unwrap();
             let out = self.dir.path().join("example.reseam");
-            pack(&stage, None, &SigningKey::from_bytes(&[42; 32]), &out)?;
+            pack(&stage, None, &test_key(&stage), &out)?;
             BundleArchive::open(&out)
         }
     }
@@ -279,7 +287,7 @@ public final class Declarations {
         let bundle = load_all(archive).unwrap();
         assert_eq!(bundle.patches().len(), 1);
         assert_eq!(catalog[0], *bundle.patches()[0].spec());
-        assert_eq!(bundle.patches()[0].spec().id, "sample.aAlias");
+        assert_eq!(bundle.patches()[0].spec().reference.id, "sample.aAlias");
         let path = bundle._extracted.path().to_path_buf();
         let patches = bundle.into_patches();
         assert!(path.join("patches.jar").is_file());
@@ -354,4 +362,12 @@ public final class Declarations {
         assert_eq!(archive.patches()[0].description, "Different metadata");
         assert!(load_all(archive).is_err());
     }
+}
+
+#[cfg(feature = "bridge")]
+#[test]
+fn the_patch_index_round_trips_the_fixture_the_gradle_plugin_writes() {
+    let fixture = include_str!("../../tests/fixtures/patch-index.json").trim();
+    let declarations: Vec<index::Declaration> = serde_json::from_str(fixture).unwrap();
+    assert_eq!(serde_json::to_string(&declarations).unwrap(), fixture);
 }

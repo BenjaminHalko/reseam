@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[boltffi::data]
 pub struct MaterializationStats {
     pub total_classes: u64,
@@ -16,6 +17,7 @@ pub struct MaterializationStats {
 /// contributors rather than guessed at. All figures are lower bounds (they
 /// exclude `Vec` capacity slack and allocator overhead).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[boltffi::data]
 pub struct MemoryBreakdown {
     pub raw_buffer_bytes: u64,
@@ -23,12 +25,15 @@ pub struct MemoryBreakdown {
     pub string_count: u64,
     pub id_table_bytes: u64,
     pub class_def_bytes: u64,
+    /// Heap held by the materialized class data, methods and instructions.
+    pub materialized_ir_bytes: u64,
     pub materialized: MaterializationStats,
 }
 
 /// Java-heap usage in bytes of the in-process patch JVM. Part of this process's RSS, so
 /// it must be subtracted to attribute memory to the native side.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[boltffi::data]
 pub struct JvmHeapStats {
     pub used: u64,
@@ -37,6 +42,7 @@ pub struct JvmHeapStats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 #[boltffi::data]
 pub enum PatchPhase {
@@ -66,21 +72,19 @@ impl PatchPhase {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[boltffi::data]
 pub struct PatchPhaseMetrics {
     pub phase: PatchPhase,
     pub duration_ms: u64,
     pub rss_bytes: Option<u64>,
     pub peak_rss_bytes: Option<u64>,
-    pub heap_live_bytes: Option<u64>,
-    /// Highest live heap during the phase, independent of what the allocator
-    /// keeps cached afterwards.
-    pub heap_peak_bytes: Option<u64>,
 }
 
 /// Memory sampled immediately after patch application, attributing process RSS
 /// to materialized DEX IR, the in-process JVM, and other allocations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[boltffi::data]
 pub struct ApplyDiagnostics {
     pub rss_bytes: Option<u64>,
@@ -89,12 +93,12 @@ pub struct ApplyDiagnostics {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[boltffi::data]
 pub struct PatchMetrics {
     pub total_duration_ms: u64,
     pub final_rss_bytes: Option<u64>,
     pub peak_rss_bytes: Option<u64>,
-    pub final_heap_live_bytes: Option<u64>,
     pub final_rss_anon_bytes: Option<u64>,
     pub final_rss_file_bytes: Option<u64>,
     pub phases: Vec<PatchPhaseMetrics>,

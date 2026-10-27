@@ -3,9 +3,9 @@
 
 use super::DexFile;
 use crate::error::Result;
-use crate::types::TypeIdx;
-use crate::types::access_flags::AccessFlags;
-use crate::types::class::{ClassData, ClassDef};
+use crate::model::TypeIdx;
+use crate::model::access_flags::AccessFlags;
+use crate::model::class::{ClassData, ClassDef};
 
 impl DexFile {
     pub fn add_class(&mut self, class: ClassDef) -> usize {
@@ -13,7 +13,7 @@ impl DexFile {
     }
 
     pub fn remove_class(&mut self, type_: TypeIdx) -> Result<Option<ClassDef>> {
-        let Some(pos) = self.class_index_of(type_) else {
+        let Some(pos) = self.classes.index_of_type(type_) else {
             return Ok(None);
         };
         let options = self.parse_options;
@@ -37,7 +37,7 @@ impl DexFile {
             class_type,
             access_flags,
             superclass,
-            interfaces: crate::types::TypeList::new(),
+            interfaces: crate::model::TypeList::new(),
             source_file: None,
             annotations: None,
             class_data: Some(Box::new(ClassData::default())),
@@ -50,5 +50,12 @@ impl DexFile {
         let type_idx = self.intern_type(superclass)?;
         self.class_mut(class_idx)?.superclass = Some(type_idx);
         Ok(())
+    }
+
+    /// Materializes the class for mutation and marks the DEX dirty.
+    /// Source reference filters remain valid because scans bypass them for resident classes.
+    pub fn class_mut(&mut self, class_idx: usize) -> Result<&mut ClassDef> {
+        self.touch();
+        self.classes.materialize(class_idx, self.parse_options)
     }
 }

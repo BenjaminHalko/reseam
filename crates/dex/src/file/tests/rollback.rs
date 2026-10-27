@@ -4,6 +4,7 @@
 use reseam_journal::Savepoint;
 
 use super::*;
+use crate::{RefKey, RefQuery};
 
 #[test]
 fn rollback_returns_a_dex_to_each_savepoint() {
@@ -16,7 +17,7 @@ fn rollback_returns_a_dex_to_each_savepoint() {
             let method = dex.intern_method(name, "run", "()V").unwrap();
             dex.class_mut(class)
                 .unwrap()
-                .add_direct_method(crate::EncodedMethod {
+                .add_method(crate::EncodedMethod {
                     method,
                     access_flags: AccessFlags::PUBLIC | AccessFlags::STATIC,
                     code: Some(std::sync::Arc::new(
@@ -25,18 +26,18 @@ fn rollback_returns_a_dex_to_each_savepoint() {
                     )),
                 });
         }
-        crate::write(&dex).unwrap()
+        write(&dex).unwrap()
     };
     let bytes = fixture();
     let mut dex = crate::parse(
         &bytes,
         ParseOptions {
-            classes: crate::types::header::Loading::Deferred,
+            classes: crate::options::Loading::Deferred,
             ..ParseOptions::default()
         },
     )
     .unwrap();
-    let original = crate::write(&dex).unwrap();
+    let original = write(&dex).unwrap();
 
     let outer = Savepoint::FIRST;
     dex.open_savepoint(outer);
@@ -44,7 +45,7 @@ fn rollback_returns_a_dex_to_each_savepoint() {
     dex.set_superclass(1, "LC;").unwrap();
     dex.create_class("LD;", AccessFlags::PUBLIC, Some("LA;"))
         .unwrap();
-    let after_outer = crate::write(&dex).unwrap();
+    let after_outer = write(&dex).unwrap();
 
     let inner = outer.next();
     dex.open_savepoint(inner);
@@ -52,15 +53,14 @@ fn rollback_returns_a_dex_to_each_savepoint() {
     dex.remove_class(removed).unwrap();
     dex.intern_field("LA;", "count", "I").unwrap();
     dex.class_mut(0).unwrap().access_flags |= AccessFlags::FINAL;
-    dex.header_mut().version = crate::DexVersion::V039;
     dex.open_savepoint(inner.next());
     dex.intern_string("released");
     dex.release_savepoint(inner.next());
 
     dex.rollback_to(inner);
-    assert_eq!(crate::write(&dex).unwrap(), after_outer);
+    assert_eq!(write(&dex).unwrap(), after_outer);
     dex.rollback_to(outer);
-    assert_eq!(crate::write(&dex).unwrap(), original);
+    assert_eq!(write(&dex).unwrap(), original);
     assert!(!dex.is_dirty());
     assert_eq!(dex.find_class_index("LB;"), Some(1));
 }
@@ -76,7 +76,7 @@ fn searches_find_a_class_a_rollback_returned_to_its_file_record() {
     built
         .class_mut(class)
         .unwrap()
-        .add_direct_method(crate::EncodedMethod {
+        .add_method(crate::EncodedMethod {
             method,
             access_flags: AccessFlags::PUBLIC | AccessFlags::STATIC,
             code: Some(std::sync::Arc::new(
@@ -95,16 +95,16 @@ fn searches_find_a_class_a_rollback_returned_to_its_file_record() {
                 .unwrap(),
             )),
         });
-    let bytes = crate::write(&built).unwrap();
+    let bytes = write(&built).unwrap();
     let mut dex = crate::parse(
         &bytes,
         ParseOptions {
-            classes: crate::types::header::Loading::Deferred,
+            classes: crate::options::Loading::Deferred,
             ..ParseOptions::default()
         },
     )
     .unwrap();
-    let marker = dex.find_string_idx("marker").unwrap();
+    let marker = dex.strings().find("marker").unwrap();
     let query = RefQuery::all_of([RefKey::String(marker)]);
     let found = |dex: &DexFile| {
         dex.scan_methods_collect(&query, |view| Ok(Some(view.class_idx)))

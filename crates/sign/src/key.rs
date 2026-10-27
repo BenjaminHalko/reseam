@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::path::Path;
-
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PublicKeyData};
 use tracing::instrument;
 
-use crate::error::{Result, SignError, crypto, invalid};
+use crate::error::{Result, crypto, invalid};
 
 /// An ECDSA P-256 private key and its matching X.509 certificate.
 /// Construction validates the certificate and subject public key, preserving its DER bytes.
@@ -71,33 +69,7 @@ impl SigningKey {
         })
     }
 
-    pub fn from_files(key_path: &Path, cert_path: &Path) -> Result<Self> {
-        Self::from_pkcs8(
-            &crate::credentials::read(key_path)?,
-            crate::credentials::read(cert_path)?,
-        )
-        .map_err(|source| SignError::Identity {
-            key: key_path.to_owned(),
-            cert: cert_path.to_owned(),
-            source: Box::new(source),
-        })
-    }
-
-    /// Reuses existing credentials or generates them when both paths are absent.
-    /// A partial pair is an error: restore the missing file or delete the other to regenerate.
-    pub fn load_or_generate(key_path: &Path, cert_path: &Path) -> Result<Self> {
-        crate::credentials::load_or_generate(key_path, cert_path)
-    }
-
-    /// Publishes this pair without replacing either credential.
-    /// Each file is staged in its destination directory before publication. An interruption
-    /// between publications can leave a partial pair that must be restored or removed.
-    /// Both parents must exist; the certificate can live in another directory/filesystem.
-    pub fn save(&self, key_path: &Path, cert_path: &Path) -> Result<()> {
-        crate::credentials::save(self, key_path, cert_path)
-    }
-
-    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         rcgen::SigningKey::sign(&self.key_pair, data)
             .map_err(|source| crypto("signing payload", source))
     }
@@ -108,10 +80,6 @@ impl SigningKey {
 
     pub fn certificate_der(&self) -> &[u8] {
         &self.certificate_der
-    }
-
-    pub fn public_key_bytes(&self) -> &[u8] {
-        self.key_pair.public_key_raw()
     }
 
     pub fn public_key_der(&self) -> &[u8] {

@@ -1,21 +1,40 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+mod calls;
+mod field_accesses;
 mod instructions;
 mod methods;
 
-use super::{FingerprintLocation, InstructionLocation, MethodLocation, PatchContext};
-use crate::error::Result;
-use reseam_apk::reseam_dex::{
-    DexFile, FingerprintHit, InstructionSite, MethodHit, StringIdx, TypeIdx,
-};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::Hash;
+
+use super::{InstructionLocation, MethodLocation, PatchContext};
+use crate::error::Result;
+use reseam_dex::{DexFile, Instruction, InstructionSite, MethodHit, RefKey, RefQuery};
 use tracing::debug;
 
-type DexResult<T> = reseam_apk::reseam_dex::Result<T>;
+type DexResult<T> = reseam_dex::Result<T>;
 
 impl PatchContext<'_> {
+    /// The index and reference of each instruction of `method` that `reference` finds one in.
+    fn references_in<I>(
+        &mut self,
+        method: MethodLocation,
+        reference: impl Fn(&Instruction) -> Option<I>,
+    ) -> Result<Vec<(usize, I)>> {
+        let code = self
+            .read_method(method)?
+            .and_then(|(_, method)| method.code.as_deref());
+        Ok(code.map_or_else(Vec::new, |code| {
+            code.instructions()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, instruction)| Some((index, reference(instruction)?)))
+                .collect()
+        }))
+    }
+
     pub(super) fn scan_all<T>(
         &self,
         what: &str,
@@ -30,24 +49,11 @@ impl PatchContext<'_> {
                 Ok(hits)
             })
     }
-
-    pub(super) fn scan_first<T>(
-        &self,
-        what: &str,
-        scan: impl Fn(usize, &DexFile) -> DexResult<Option<T>>,
-    ) -> Result<Option<T>> {
-        debug!(what, "scan");
-        for (index, dex) in self.dex().iter().enumerate() {
-            if let Some(hit) = scan(index, dex)? {
-                return Ok(Some(hit));
-            }
-        }
-        Ok(None)
-    }
 }
 
 /// A method reference to find calls to. Unset parts match anything;
-/// `required_parameters` must each appear somewhere in the parameter list.
+/// `required_parameters` must each appear somewhere in the parameter list, and the
+/// owner must be assignable to each of `owner_assignable_to`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MethodRefQuery<'a> {
     pub owner: Option<&'a str>,
@@ -56,15 +62,7 @@ pub struct MethodRefQuery<'a> {
     pub parameters: Option<&'a [&'a str]>,
     pub required_parameters: &'a [&'a str],
     pub parameter_count: Option<usize>,
-}
-
-impl MethodRefQuery<'_> {
-    pub(super) fn constrains_proto(&self) -> bool {
-        self.return_type.is_some()
-            || self.parameters.is_some()
-            || !self.required_parameters.is_empty()
-            || self.parameter_count.is_some()
-    }
+    pub owner_assignable_to: &'a [&'a str],
 }
 
 /// A field reference to find reads and writes of. Unset parts match anything.
@@ -83,37 +81,12 @@ pub(super) fn resolve<T>(
     value.map_or(Ok(None), |value| find(value).map(Some).ok_or(Unresolved))
 }
 
-pub(super) fn member_targets<K: Hash + Eq, I: Iterator<Item = K>>(
-    dex: &DexFile,
-    targets: &[(String, String)],
-    members: impl Fn(TypeIdx, StringIdx) -> I,
-) -> HashMap<K, usize> {
-    targets
-        .iter()
-        .enumerate()
-        .filter_map(|(index, (class, name))| {
-            Some((index, dex.find_type_idx(class)?, dex.find_string_idx(name)?))
-        })
-        .flat_map(|(index, class, name)| members(class, name).map(move |id| (id, index)))
-        .fold(HashMap::new(), |mut map, (id, index)| {
-            map.entry(id).or_insert(index);
-            map
-        })
-}
-
 pub(super) fn method_location(dex_idx: usize, hit: &MethodHit) -> MethodLocation {
     MethodLocation {
         dex_idx,
         class_idx: hit.class_idx,
         method_idx: hit.method_pos,
         kind: hit.kind,
-    }
-}
-
-pub(super) fn fingerprint_location(dex_idx: usize, hit: FingerprintHit) -> FingerprintLocation {
-    FingerprintLocation {
-        method: method_location(dex_idx, &hit.method),
-        matched_indices: hit.matched_indices,
     }
 }
 
@@ -130,4 +103,23 @@ pub(super) fn instruction_location(
         },
         insn_idx: site.insn_idx,
     }
+}
+
+/// The instructions of `dex` whose reference is one of `members`.
+pub(super) fn sites_of<I: Copy + Eq + Hash + Sync>(
+    dex_idx: usize,
+    dex: &DexFile,
+    members: &HashSet<I>,
+    key: impl Fn(I) -> RefKey,
+    reference: impl Fn(&InstructionSite<'_>) -> Option<I> + Sync,
+) -> reseam_dex::Result<Vec<InstructionLocation>> {
+    if members.is_empty() {
+        return Ok(Vec::new());
+    }
+    let query = RefQuery::any_of(members.iter().copied().map(key));
+    dex.scan_instructions(&query, |site| {
+        members
+            .contains(&reference(site)?)
+            .then(|| instruction_location(dex_idx, site))
+    })
 }

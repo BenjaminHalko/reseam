@@ -5,17 +5,14 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use super::DexFile;
-use crate::types::{
-    FieldId, FieldIdx, MethodId, MethodIdx, ProtoIdx, Prototype, StringIdx, TypeIdx,
+use crate::model::descriptor::parse_method_descriptor;
+use crate::model::{
+    FieldId, FieldIdx, MethodId, MethodIdx, ProtoIdx, Prototype, StringIdx, TypeIdx, TypeList,
 };
 
 impl DexFile {
-    pub fn string(&self, idx: StringIdx) -> Cow<'_, str> {
-        self.strings.get(idx)
-    }
-
     pub fn type_descriptor(&self, idx: TypeIdx) -> Cow<'_, str> {
-        self.string(self.type_string(idx))
+        self.strings().get(self.type_string(idx))
     }
 
     pub fn proto_descriptor(&self, proto: &Prototype) -> String {
@@ -30,19 +27,30 @@ impl DexFile {
     }
 
     pub fn find_class_index(&self, descriptor: &str) -> Option<usize> {
-        self.class_index_of(self.find_type_idx(descriptor)?)
-    }
-
-    pub fn find_string_idx(&self, s: &str) -> Option<StringIdx> {
-        self.strings.find(s)
+        self.classes.index_of_type(self.find_type_idx(descriptor)?)
     }
 
     pub fn find_type_idx(&self, descriptor: &str) -> Option<TypeIdx> {
         self.type_lookups
             .get_or_find(descriptor, self.types.len(), || {
-                let string_idx = self.find_string_idx(descriptor)?;
+                let string_idx = self.strings().find(descriptor)?;
                 self.types.find(&string_idx).map(|i| TypeIdx(i as u32))
             })
+    }
+
+    /// The prototype a method descriptor such as `(I)V` names, if the pools hold it.
+    pub fn find_proto(&self, descriptor: &str) -> Option<ProtoIdx> {
+        let (parameters, return_type) = parse_method_descriptor(descriptor)?;
+        let parameters = parameters
+            .iter()
+            .map(|parameter| self.find_type_idx(parameter))
+            .collect::<Option<TypeList>>()?;
+        self.find_proto_idx(self.find_type_idx(return_type)?, &parameters)
+    }
+
+    /// The id of method `name` with prototype `proto` of class `class`, if the pools hold it.
+    pub fn find_method(&self, class: TypeIdx, name: &str, proto: &str) -> Option<MethodIdx> {
+        self.find_method_idx(class, self.strings.find(name)?, self.find_proto(proto)?)
     }
 
     pub(crate) fn find_proto_idx(&self, ret: TypeIdx, params: &[TypeIdx]) -> Option<ProtoIdx> {
@@ -102,9 +110,5 @@ impl DexFile {
         self.fields
             .find(&FieldId { class, name, type_ })
             .map(|i| FieldIdx(i as u32))
-    }
-
-    pub fn class_index_of(&self, type_idx: TypeIdx) -> Option<usize> {
-        self.classes.index_of_type(type_idx)
     }
 }

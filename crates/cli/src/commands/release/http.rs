@@ -1,21 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::path::Path;
-
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 use ureq::http::{Response, StatusCode};
 use ureq::{Agent, Body, ResponseExt};
 
-pub(super) fn agent() -> Agent {
+pub(crate) fn agent() -> Agent {
     Agent::config_builder()
         .http_status_as_error(false)
         .build()
         .into()
 }
 
-pub(super) fn checked(response: Result<Response<Body>, ureq::Error>) -> Result<Response<Body>> {
+pub(crate) fn checked(response: Result<Response<Body>, ureq::Error>) -> Result<Response<Body>> {
     let mut response = response?;
     if response.status().is_success() {
         return Ok(response);
@@ -26,7 +24,7 @@ pub(super) fn checked(response: Result<Response<Body>, ureq::Error>) -> Result<R
     bail!("{uri} returned {status}: {}", body.trim())
 }
 
-pub(super) fn json<T: DeserializeOwned>(
+pub(crate) fn json<T: DeserializeOwned>(
     response: Result<Response<Body>, ureq::Error>,
 ) -> Result<T> {
     let mut response = checked(response)?;
@@ -37,7 +35,7 @@ pub(super) fn json<T: DeserializeOwned>(
         .with_context(|| format!("{uri} returned unexpected JSON"))
 }
 
-pub(super) fn text_if_found(
+pub(crate) fn text_if_found(
     response: Result<Response<Body>, ureq::Error>,
 ) -> Result<Option<String>> {
     let response = response?;
@@ -45,10 +43,4 @@ pub(super) fn text_if_found(
         return Ok(None);
     }
     Ok(Some(checked(Ok(response))?.into_body().read_to_string()?))
-}
-
-pub(super) fn file_name(path: &Path) -> Result<&str> {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .with_context(|| format!("{} has no UTF-8 file name", path.display()))
 }

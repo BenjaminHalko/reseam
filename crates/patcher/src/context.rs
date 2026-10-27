@@ -6,6 +6,7 @@ mod dex;
 mod extensions;
 mod files;
 mod hermes;
+mod hierarchy;
 mod search;
 mod undo;
 
@@ -15,10 +16,11 @@ pub(crate) use hermes::hermes_imports;
 pub use search::{FieldRefQuery, MethodRefQuery};
 
 use reseam_apk::ApkFile;
-use reseam_apk::reseam_dex::{ClassSkeleton, CodeItem, DexFile, EncodedMethod, MethodKind};
+use reseam_dex::{ClassSkeleton, CodeItem, DexFile, EncodedMethod, MethodKind};
 
-use crate::log::{LogEntry, PatchLog};
+use crate::log::{PatchLog, PatchScope};
 use crate::options::PatchOptions;
+use crate::patch::PatchRef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClassLocation {
@@ -40,22 +42,9 @@ pub struct InstructionLocation {
     pub insn_idx: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct SiteHit {
-    pub loc: InstructionLocation,
-    pub target_index: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct FingerprintLocation {
-    pub method: MethodLocation,
-    pub matched_indices: Vec<u32>,
-}
-
 pub struct PatchContext<'a> {
     apk: &'a mut ApkFile,
-    log: PatchLog,
-    options: PatchOptions,
+    scope: PatchScope,
     skeleton: Option<CachedSkeleton>,
     method: Option<CachedMethod>,
     extensions: ExtensionSet,
@@ -74,14 +63,14 @@ struct CachedMethod {
 }
 
 impl<'a> PatchContext<'a> {
-    pub fn new(apk: &'a mut ApkFile) -> Self {
+    /// A context over `apk` that links classes from `extensions`.
+    pub fn new(apk: &'a mut ApkFile, extensions: ExtensionSet) -> Self {
         Self {
             apk,
-            log: PatchLog::default(),
-            options: PatchOptions::default(),
+            scope: PatchScope::default(),
             skeleton: None,
             method: None,
-            extensions: ExtensionSet::app_runtime(),
+            extensions,
             hermes: None,
             journal: reseam_journal::Journal::default(),
         }
@@ -98,24 +87,19 @@ impl<'a> PatchContext<'a> {
     }
 
     pub fn log(&mut self) -> &mut PatchLog {
-        &mut self.log
+        &mut self.scope.log
     }
 
     pub fn options(&self) -> &PatchOptions {
-        &self.options
+        &self.scope.options
     }
 
-    pub(crate) fn log_and_options(&mut self) -> (&mut PatchLog, &PatchOptions) {
-        (&mut self.log, &self.options)
+    pub(crate) fn scope(&mut self) -> &mut PatchScope {
+        &mut self.scope
     }
 
-    pub(crate) fn begin_patch(&mut self, patch: &str, options: PatchOptions) {
-        self.log = PatchLog::new(patch);
-        self.options = options;
-    }
-
-    pub(crate) fn take_log_entries(&mut self) -> Vec<LogEntry> {
-        self.log.take_entries()
+    pub(crate) fn begin_patch(&mut self, patch: &PatchRef, options: PatchOptions) {
+        self.scope = PatchScope::new(patch, options);
     }
 }
 
@@ -126,12 +110,7 @@ pub fn method_mut(
     let Some(data) = dex.class_mut(m.class_idx)?.class_data.as_mut() else {
         return Ok(None);
     };
-    let list = if m.kind == MethodKind::Virtual {
-        &mut data.virtual_methods
-    } else {
-        &mut data.direct_methods
-    };
-    Ok(list.get_mut(m.method_idx))
+    Ok(data.methods_mut(m.kind).get_mut(m.method_idx))
 }
 
 pub fn code_mut(

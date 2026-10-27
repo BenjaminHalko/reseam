@@ -3,50 +3,34 @@
 
 use reseam_journal::Savepoint;
 
+use super::DexFile;
 use super::classes::Undone;
-use super::{DexFile, HiddenApiData};
-use crate::types::header::DexHeader;
-use crate::write::WriteOptions;
+use crate::model::PerPool;
+use crate::options::WriteOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum DexPart {
     Pools,
-    Header,
-    HiddenApi,
     WriteOptions,
 }
 
 #[derive(Debug, Clone)]
 pub(super) enum DexUndo {
     Pools(PoolLens),
-    Header(DexHeader),
-    HiddenApi(Option<HiddenApiData>),
     WriteOptions(WriteOptions),
 }
 
 /// The append-only pools' lengths, and whether the DEX had changed, at one point.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct PoolLens {
-    strings: usize,
-    types: usize,
-    prototypes: usize,
-    fields: usize,
-    methods: usize,
-    call_sites: usize,
-    method_handles: usize,
+    lens: PerPool<usize>,
     dirty: bool,
 }
 
 impl DexFile {
     pub(super) fn pool_lens(&self) -> PoolLens {
         PoolLens {
-            strings: self.strings.len(),
-            types: self.types.len(),
-            prototypes: self.prototypes.len(),
-            fields: self.fields.len(),
-            methods: self.methods.len(),
-            call_sites: self.call_sites.len(),
-            method_handles: self.method_handles.len(),
+            lens: PerPool::from_fn(|pool| self.pool_len(pool)),
             dirty: self.dirty,
         }
     }
@@ -73,18 +57,10 @@ impl DexFile {
         for undo in self.journal.rollback(savepoint) {
             match undo {
                 DexUndo::Pools(lens) => {
-                    self.strings.truncate(lens.strings);
-                    self.types.truncate(lens.types);
-                    self.prototypes.truncate(lens.prototypes);
-                    self.fields.truncate(lens.fields);
-                    self.methods.truncate(lens.methods);
-                    self.call_sites.truncate(lens.call_sites);
-                    self.method_handles.truncate(lens.method_handles);
+                    self.truncate_pools(&lens.lens);
                     self.dirty = lens.dirty;
                     self.type_lookups.clear();
                 }
-                DexUndo::Header(header) => self.header = header,
-                DexUndo::HiddenApi(hidden_api) => self.hidden_api = hidden_api,
                 DexUndo::WriteOptions(options) => self.write_options = options,
             }
         }

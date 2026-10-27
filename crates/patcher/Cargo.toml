@@ -14,21 +14,21 @@ reseam-storage = { workspace = true }
 reseam-journal = { workspace = true }
 reseam-hermes = { workspace = true }
 reseam-model = { workspace = true }
+reseam-dex     = { workspace = true }
 reseam-apk          = { workspace = true }
 reseam-sign         = { workspace = true, optional = true }
 thiserror   = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 toml        = { workspace = true }
-smallvec    = { workspace = true }
 rustc-hash  = { workspace = true }
 boltffi     = { workspace = true, optional = true }
 jni         = { workspace = true, optional = true }
 zip         = { workspace = true }
-anyhow      = { workspace = true }
 tracing     = { workspace = true }
 tempfile    = { workspace = true }
 ed25519-dalek = { workspace = true }
+ring        = { workspace = true }
 sha2        = { workspace = true }
 hex         = { workspace = true }
 
@@ -40,6 +40,9 @@ default = ["kotlin"]
 kotlin = ["bridge", "dep:jni"]
 bridge = ["dep:boltffi", "dep:reseam-sign"]
 browser = ["bridge"]
+
+[dev-dependencies]
+reseam-fixtures = { workspace = true }
 
 [build-dependencies]
 cc = "1"

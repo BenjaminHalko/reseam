@@ -1,19 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Cossale <hello@auna.li>
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use super::DexBytes;
+use crate::DexBytes;
 use crate::error::{Result, invalid, invalid_call_site, invalid_method_handle_type, require_array};
-use crate::read::{read_u16, read_u32};
-use crate::types::encoded_value::EncodedValue;
-use crate::types::header::ParseOptions;
-use crate::types::method_handle::{
+use crate::model::encoded_value::EncodedValue;
+use crate::model::method_handle::{
     CallSiteItem, MethodHandle, MethodHandleMember, MethodHandleType,
 };
-use crate::types::{FieldIdx, MethodIdx};
+use crate::model::{FieldIdx, MethodIdx};
+use crate::options::ParseOptions;
+use reseam_bytes::{read_u32, u16_at};
 use std::borrow::Cow;
 
 /// A record whose encoded representation may reference variable-size data.
-pub trait FileRecord: Clone {
+pub(crate) trait FileRecord: Clone {
     const SIZE: usize;
     fn read(buf: &[u8], offset: usize, index: u32, options: ParseOptions) -> Result<Self>;
 }
@@ -21,7 +21,7 @@ pub trait FileRecord: Clone {
 /// File-backed records with appended owned entries. Reads borrow authored entries
 /// and decode only one file entry; indices remain stable when appending.
 #[derive(Debug, Clone)]
-pub struct FileTable<T> {
+pub(crate) struct FileTable<T> {
     raw: Option<DexBytes>,
     offset: usize,
     count: usize,
@@ -96,10 +96,40 @@ impl<T: FileRecord> FileTable<T> {
     pub fn iter(&self) -> impl ExactSizeIterator<Item = Result<Cow<'_, T>>> {
         (0..self.len()).map(|index| self.get(index))
     }
-    pub fn push(&mut self, record: T) -> usize {
+    pub(crate) fn push(&mut self, record: T) -> usize {
         let index = self.len();
         self.tail.push(record);
         index
+    }
+
+    /// The index of a record equal to `record`. Only the indices in
+    /// `candidates` are compared when it is given.
+    pub(crate) fn find(
+        &self,
+        record: &T,
+        candidates: Option<impl IntoIterator<Item = u32>>,
+    ) -> Result<Option<usize>>
+    where
+        T: PartialEq,
+    {
+        let equal = |index: usize| Ok::<_, crate::DexError>(*self.get(index)? == *record);
+        match candidates {
+            Some(candidates) => {
+                for index in candidates {
+                    if equal(index as usize)? {
+                        return Ok(Some(index as usize));
+                    }
+                }
+            }
+            None => {
+                for index in 0..self.len() {
+                    if equal(index)? {
+                        return Ok(Some(index));
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Drops the records pushed after the table held `len`.
@@ -113,10 +143,10 @@ impl FileRecord for MethodHandle {
     const SIZE: usize = 8;
     fn read(buf: &[u8], offset: usize, _: u32, _: ParseOptions) -> Result<Self> {
         require_array(buf, offset, 1, Self::SIZE, "method handle")?;
-        let value = read_u16(buf, offset)?;
+        let value = u16_at(buf, offset);
         let handle_type =
             MethodHandleType::from_u16(value).ok_or_else(|| invalid_method_handle_type(value))?;
-        let index = u32::from(read_u16(buf, offset + 4)?);
+        let index = u32::from(u16_at(buf, offset + 4));
         let member = if handle_type.is_field() {
             MethodHandleMember::Field(FieldIdx(index))
         } else {
@@ -132,7 +162,7 @@ impl FileRecord for MethodHandle {
 impl FileRecord for CallSiteItem {
     const SIZE: usize = 4;
     fn read(buf: &[u8], offset: usize, index: u32, options: ParseOptions) -> Result<Self> {
-        let offset = read_u32(buf, offset)? as usize;
+        let offset = read_u32(buf, offset, "call site id")? as usize;
         let (mut values, _) =
             crate::read::encoded_value::read_encoded_array_with_opts(buf, offset, options)?;
         let [
